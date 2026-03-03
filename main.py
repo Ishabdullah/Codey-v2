@@ -23,14 +23,17 @@ BANNER = f"""[bold green]
 def parse_args():
     import argparse
     parser = argparse.ArgumentParser(description="Codey - Local AI coding assistant")
-    parser.add_argument("prompt",    nargs="?")
-    parser.add_argument("--yolo",    action="store_true")
-    parser.add_argument("--threads", type=int)
-    parser.add_argument("--ctx",     type=int)
-    parser.add_argument("--version", action="store_true")
-    parser.add_argument("--chat",    action="store_true")
-    parser.add_argument("--read",    nargs="+", metavar="FILE")
-    parser.add_argument("--init",    action="store_true")
+    parser.add_argument("prompt",       nargs="?")
+    parser.add_argument("--yolo",       action="store_true", help="Skip confirmations")
+    parser.add_argument("--threads",    type=int)
+    parser.add_argument("--ctx",        type=int)
+    parser.add_argument("--version",    action="store_true")
+    parser.add_argument("--chat",       action="store_true")
+    parser.add_argument("--read",       nargs="+", metavar="FILE")
+    parser.add_argument("--init",       action="store_true", help="Generate CODEY.md")
+    parser.add_argument("--fix",        metavar="FILE", help="Run file, auto-fix errors")
+    parser.add_argument("--no-resume",  action="store_true", help="Don't load saved session")
+    parser.add_argument("--clear-session", action="store_true", help="Clear saved session")
     return parser.parse_args()
 
 def apply_overrides(args):
@@ -74,13 +77,9 @@ def run_init():
         error(f"Generation failed: {content}")
         return
     path = write_codeymd(content)
-    if path.startswith("[ERROR]"):
-        error(path)
-    else:
-        success(f"CODEY.md written to {path}")
+    success(f"CODEY.md written to {path}") if not path.startswith("[ERROR]") else error(path)
 
 def print_diff(diff_output: str):
-    """Print diff with color."""
     for line in diff_output.splitlines():
         if line.startswith("+") and not line.startswith("+++"):
             console.print(f"[green]{line}[/green]")
@@ -91,12 +90,14 @@ def print_diff(diff_output: str):
         else:
             console.print(line)
 
-def handle_command(user_input: str, history: list) -> tuple[bool, list]:
+def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[bool, list]:
     cmd = user_input.strip()
     low = cmd.lower()
 
     if low in ("/exit", "/quit", "exit", "quit"):
-        console.print("[dim]Goodbye![/dim]")
+        from core.sessions import save_session
+        save_session(history)
+        console.print("[dim]Session saved. Goodbye![/dim]")
         shutdown()
         sys.exit(0)
 
@@ -105,31 +106,28 @@ def handle_command(user_input: str, history: list) -> tuple[bool, list]:
         ctx.clear_context()
         from core.filehistory import clear_history
         clear_history()
-        success("History, file context, and undo history cleared.")
+        from core.sessions import clear_session
+        clear_session()
+        success("History, context, undo history, and saved session cleared.")
         return True, history
 
-    # /undo [file] — restore last version
     if low.startswith("/undo"):
         from core.filehistory import undo, list_history
         parts = cmd.split(maxsplit=1)
         if len(parts) < 2:
-            # Show what can be undone
             hist = list_history()
             if not hist:
                 info("Nothing to undo this session.")
             else:
                 console.print("[bold]Files with undo history:[/bold]")
                 for path, timestamps in hist.items():
-                    name = Path(path).name
-                    console.print(f"  📄 {name} — versions at: {', '.join(timestamps)}")
+                    console.print(f"  📄 {Path(path).name} — {', '.join(timestamps)}")
                 info("Usage: /undo <filename>")
         else:
             result = undo(parts[1])
-            if result.startswith("[ERROR]"):
-                error(result)
+            error(result) if result.startswith("[ERROR]") else None
         return True, history
 
-    # /diff [file] — show changes
     if low.startswith("/diff"):
         from core.filehistory import diff, list_history
         parts = cmd.split(maxsplit=1)
@@ -150,14 +148,68 @@ def handle_command(user_input: str, history: list) -> tuple[bool, list]:
                 print_diff(result)
         return True, history
 
-    # /load — load files, globs, or directories
+    if low.startswith("/search"):
+        from core.search import search_in_project, search_definitions
+        parts = cmd.split(maxsplit=1)
+        if len(parts) < 2:
+            info("Usage: /search <pattern> [path]")
+            info("       /search def run_agent")
+            info("       /search import core/")
+        else:
+            query_parts = parts[1].split(maxsplit=1)
+            pattern = query_parts[0]
+            search_path = query_parts[1] if len(query_parts) > 1 else "."
+            result = search_in_project(pattern, search_path)
+            console.print(result)
+        return True, history
+
+    if low.startswith("/git"):
+        from core.githelper import git_commit, git_push, git_status, git_log, is_git_repo
+        parts = cmd.split(maxsplit=1)
+
+        if not is_git_repo():
+            error("Not a git repository.")
+            return True, history
+
+        sub = parts[1].strip() if len(parts) > 1 else ""
+        sub_low = sub.lower()
+
+        if sub_low == "status" or sub == "":
+            console.print(git_status())
+        elif sub_low == "log":
+            console.print(git_log())
+        elif sub_low.startswith("push"):
+            result = git_push()
+            success(result) if not result.startswith("[ERROR]") else error(result)
+        else:
+            # Treat as commit message
+            result = git_commit(sub)
+            if result.startswith("[ERROR]"):
+                error(result)
+            elif result.startswith("Nothing"):
+                info(result)
+            else:
+                success(result)
+                if console.input("[dim]Push to remote? [y/N]: [/dim]").strip().lower() in ("y", "yes"):
+                    push_result = git_push()
+                    success(push_result) if not push_result.startswith("[ERROR]") else error(push_result)
+        return True, history
+
+    if low.startswith("/sessions"):
+        from core.sessions import list_sessions
+        sessions = list_sessions()
+        if not sessions:
+            info("No saved sessions.")
+        else:
+            console.print("[bold]Saved sessions:[/bold]")
+            for s in sessions:
+                console.print(f"  📁 {Path(s['project']).name} — {s['turns']} turns — {s['saved_at']}")
+        return True, history
+
     if low.startswith("/load"):
         parts = cmd.split()[1:]
         if not parts:
             info("Usage: /load <file|glob|dir> ...")
-            info("  /load *.py              — load all Python files")
-            info("  /load core/             — load all files in core/")
-            info("  /load main.py utils/    — mix of files and dirs")
         else:
             for target in parts:
                 p = Path(target)
@@ -169,7 +221,6 @@ def handle_command(user_input: str, history: list) -> tuple[bool, list]:
                     ctx.load_file(target)
         return True, history
 
-    # /read (alias for /load single file)
     if low.startswith("/read"):
         parts = cmd.split()[1:]
         if not parts:
@@ -181,11 +232,8 @@ def handle_command(user_input: str, history: list) -> tuple[bool, list]:
 
     if low.startswith("/unread"):
         parts = cmd.split()[1:]
-        if not parts:
-            info("Usage: /unread <file>")
-        else:
-            for f in parts:
-                ctx.unload_file(f)
+        for f in parts:
+            ctx.unload_file(f)
         return True, history
 
     if low == "/context":
@@ -193,7 +241,8 @@ def handle_command(user_input: str, history: list) -> tuple[bool, list]:
         if loaded:
             console.print("[bold]Loaded files:[/bold]")
             for f in loaded:
-                console.print(f"  📄 {Path(f).name} ({len(ctx._loaded_files[f])} chars)")
+                size = len(ctx._loaded_files.get(f, ""))
+                console.print(f"  📄 {Path(f).name} ({size} chars)")
         else:
             info("No files loaded.")
         return True, history
@@ -237,36 +286,48 @@ def handle_command(user_input: str, history: list) -> tuple[bool, list]:
     if low == "/help":
         console.print("""
 [bold]File commands:[/bold]
-  /read <file>          Load file into context
-  /load <file|*.py|dir> Load file, glob, or directory
-  /unread <file>        Remove file from context
-  /context              Show loaded files
-  /diff [file]          Show what Codey changed
-  /undo [file]          Restore file to previous version
+  /read <file>           Load file into context
+  /load <file|*.py|dir>  Load file, glob, or whole directory
+  /unread <file>         Remove file from context
+  /context               Show loaded files and sizes
+  /diff [file]           Show what Codey changed (colored diff)
+  /undo [file]           Restore file to previous version
 
-[bold]Project commands:[/bold]
-  /init                 Generate CODEY.md project memory
-  /memory               Show CODEY.md contents
-  /project              Show project info
-  /cwd [path]           Show or change directory
+[bold]Search:[/bold]
+  /search <pattern>      Grep across all project files
+  /search <pat> <dir>    Grep in specific directory
 
-[bold]Session commands:[/bold]
-  /clear                Clear history, context, undo history
-  /exit                 Quit
-  /help                 This help
+[bold]Git:[/bold]
+  /git                   Show git status
+  /git <message>         Stage all and commit
+  /git push              Push to remote
+  /git log               Show recent commits
+
+[bold]Project:[/bold]
+  /init                  Generate CODEY.md project memory
+  /memory                Show CODEY.md contents
+  /project               Show project info
+  /cwd [path]            Show or change directory
+
+[bold]Session:[/bold]
+  /sessions              List all saved sessions
+  /clear                 Clear history, context, undo, session
+  /exit                  Save session and quit
 
 [bold]CLI flags:[/bold]
-  codey "task"          One-shot
-  codey --chat "task"   Chat with prefilled prompt
-  codey --yolo "task"   Skip confirmations
-  codey --read file.py  Pre-load file
-  codey --init          Generate CODEY.md and exit
+  codey "task"           One-shot
+  codey --chat "task"    Chat with prefilled prompt
+  codey --yolo "task"    Skip all confirmations
+  codey --fix file.py    Run file, auto-fix any errors
+  codey --read file.py   Pre-load file into context
+  codey --init           Generate CODEY.md and exit
+  codey --no-resume      Start fresh (ignore saved session)
         """)
         return True, history
 
     return False, history
 
-def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None):
+def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, resume=True):
     console.print(BANNER)
     separator()
     load_model()
@@ -276,9 +337,8 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None):
     proj = detect_project()
     if proj["type"] != "unknown":
         info(f"Project: [bold]{proj['type']}[/bold] · {os.getcwd()}")
-    codeymd_path = find_codeymd()
-    if codeymd_path:
-        info(f"Memory: [bold]CODEY.md[/bold] found")
+    if find_codeymd():
+        info("Memory: [bold]CODEY.md[/bold] found")
     else:
         info("No CODEY.md — run [bold]/init[/bold] to create project memory")
 
@@ -286,11 +346,16 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None):
         for f in preload:
             ctx.load_file(f)
 
+    # Load saved session
+    from core.sessions import load_session, save_session, session_exists
     history = []
+    if resume and session_exists():
+        history = load_session()
 
     if initial_prompt and one_shot:
         try:
-            run_agent(initial_prompt, history, yolo=yolo)
+            _, history = run_agent(initial_prompt, history, yolo=yolo)
+            save_session(history)
         except KeyboardInterrupt:
             pass
         finally:
@@ -303,6 +368,7 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None):
     if initial_prompt:
         try:
             _, history = run_agent(initial_prompt, history, yolo=yolo)
+            save_session(history)
         except KeyboardInterrupt:
             console.print("\n[dim]Interrupted.[/dim]")
 
@@ -312,19 +378,21 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None):
         try:
             user_input = console.input(f"[bold blue]You{suffix}>[/bold blue] ").strip()
         except (KeyboardInterrupt, EOFError):
-            console.print("\n[dim]Goodbye![/dim]")
+            save_session(history)
+            console.print("\n[dim]Session saved. Goodbye![/dim]")
             shutdown()
             break
 
         if not user_input:
             continue
 
-        was_cmd, history = handle_command(user_input, history)
+        was_cmd, history = handle_command(user_input, history, yolo=yolo)
         if was_cmd:
             continue
 
         try:
             _, history = run_agent(user_input, history, yolo=yolo)
+            save_session(history)
         except KeyboardInterrupt:
             console.print("\n[dim]Interrupted.[/dim]")
         except Exception as e:
@@ -334,18 +402,43 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None):
 
 def main():
     args = parse_args()
+
     if args.version:
         print(f"Codey v{CODEY_VERSION}")
         sys.exit(0)
+
     apply_overrides(args)
+
+    if args.clear_session:
+        from core.sessions import clear_session
+        clear_session()
+        return
+
     if args.init:
         load_model()
         run_init()
         shutdown()
         return
+
+    if args.fix:
+        load_model()
+        from core.fixmode import fix_file
+        # --fix is automated, always disable confirmations
+        from utils import config
+        config.AGENT_CONFIG["confirm_write"] = False
+        config.AGENT_CONFIG["confirm_shell"] = False
+        fix_file(args.fix, extra_instruction=args.prompt or "", yolo=True)
+        shutdown()
+        return
+
     one_shot = bool(args.prompt and not args.chat)
-    repl(initial_prompt=args.prompt, yolo=args.yolo,
-         one_shot=one_shot, preload=args.read)
+    repl(
+        initial_prompt=args.prompt,
+        yolo=args.yolo,
+        one_shot=one_shot,
+        preload=args.read,
+        resume=not args.no_resume,
+    )
 
 if __name__ == "__main__":
     main()

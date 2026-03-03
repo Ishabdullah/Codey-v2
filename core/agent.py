@@ -30,7 +30,8 @@ HALLUCINATION_MARKERS = [
     "\nuser\n", "\nUSER\n", "\nUser\n",
     "\nassistant\n", "\nASSISTANT\n", "\nAssistant\n",
     "user\n#", "assistant\n",
-    "## Loaded Files", "## Project Memory", "## Current Project",
+    "\n## Loaded Files", "\n## Project Memory", "\n## Current Project",
+    "## Project Memory\n", "## Loaded Files\n",
     "<|im_start|>", "<|im_end|>",
 ]
 
