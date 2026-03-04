@@ -39,9 +39,12 @@ def save_session(history: list, project_dir: str = None, max_turns: int = 6):
     except Exception as e:
         warning(f"Could not save session: {e}")
 
-def load_session(project_dir: str = None) -> list:
+def load_session(project_dir: str = None, path: str = None) -> list:
     """Load conversation history from disk. Returns empty list if none."""
-    path = _session_path(project_dir)
+    if path:
+        path = Path(path)
+    else:
+        path = _session_path(project_dir)
     if not path.exists():
         return []
     try:

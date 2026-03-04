@@ -34,7 +34,7 @@ def parse_args():
     parser.add_argument("--fix",        metavar="FILE", help="Run file, auto-fix errors")
     parser.add_argument("--tdd",        metavar="FILE", help="TDD mode: source.py test_source.py")
     parser.add_argument("--tests",      metavar="FILE", help="Test file for --tdd mode")
-    parser.add_argument("--no-resume",  action="store_true", help="Don't load saved session")
+    parser.add_argument("--session",    nargs="?", const="list", metavar="ID", help="Resume saved session")
     parser.add_argument("--clear-session", action="store_true", help="Clear saved session")
     parser.add_argument("--plan", action="store_true", help="Enable plan mode for complex tasks")
     return parser.parse_args()
@@ -353,7 +353,7 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
 
     return False, history
 
-def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, resume=True, plan=False):
+def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=False, session_path=None):
     console.print(BANNER)
     separator()
     load_model()
@@ -373,10 +373,12 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, resume=T
             ctx.load_file(f)
 
     # Load saved session
-    from core.sessions import load_session, save_session, session_exists
+    from core.sessions import load_session, save_session
     history = []
-    if resume and session_exists():
-        history = load_session()
+    if session_path:
+        history = load_session(session_path)
+        if history:
+            info(f'Resumed session: {len(history)//2} turns')
 
     if initial_prompt and one_shot:
         try:
@@ -472,13 +474,22 @@ def main():
         shutdown()
         return
 
+    resolved_session = None
+    if hasattr(args, "session") and args.session and args.session != "list":
+        from pathlib import Path as _P
+        from core.sessions import SESSIONS_DIR
+        matches = list(_P(SESSIONS_DIR).glob(f"*{args.session}*.json"))
+        if matches:
+            resolved_session = str(matches[0])
+            info(f"Resuming: {matches[0].name}")
+
     one_shot = bool(args.prompt and not args.chat)
     repl(
         initial_prompt=args.prompt,
         yolo=args.yolo,
         one_shot=one_shot,
         preload=args.read,
-        resume=not args.no_resume,
+        session_path=resolved_session,
         plan=args.plan,
     )
 

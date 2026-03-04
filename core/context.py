@@ -107,8 +107,13 @@ def auto_load_from_prompt(prompt):
     found = detect_filenames(prompt)
     loaded = []
     for f in found:
+        from pathlib import Path as _P
+        import os as _os
+        key = str(_P(f).expanduser().resolve())
+        if key in _mem._files:
+            _mem.touch_file(f)
+            continue  # already loaded, just touch it
         r = load_file(f)
         if not r.startswith("[ERROR]"):
             loaded.append(f)
-            _mem.touch_file(f)
     return loaded

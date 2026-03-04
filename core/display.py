@@ -134,3 +134,47 @@ def show_tdd_complete(passed, total, iterations):
             f'[yellow]{passed}/{total} tests passing[/yellow] after {iterations} iteration(s)',
             title='[yellow]Partial Pass[/yellow]', border_style='yellow', box=box.ROUNDED
         ))
+
+# ── Task queue display ───────────────────────────────────────
+
+from rich.table import Table
+from rich.live import Live as _Live
+
+_task_live = None
+
+def _build_task_panel(queue):
+    """Build a rich panel showing task checklist."""
+    from core.taskqueue import STATUS_DONE, STATUS_RUNNING, STATUS_FAILED, STATUS_PENDING
+    text = Text.from_markup('')
+    for t in queue.tasks:
+        if t.status == STATUS_DONE:
+            icon = '[green]✓[/green]'  # markup
+            style = 'dim'
+        elif t.status == STATUS_RUNNING:
+            icon = '[cyan]⠸[/cyan]'  # markup
+            style = 'bold'
+        elif t.status == STATUS_FAILED:
+            icon = '[red]✗[/red]'  # markup
+            style = 'red'
+        else:
+            icon = '[dim]☐[/dim]'  # markup
+            style = 'dim'
+        done = queue.done_count()
+        total = len(queue.tasks)
+        line = f'  {icon}  {t.id}. {t.description[:50]}'
+        if t.status == STATUS_DONE and t.result:
+            line += f' [dim]→ {t.result[:40]}[/dim]'
+        text.append_text(Text.from_markup(line + '\n'))
+    done = queue.done_count()
+    total = len(queue.tasks)
+    title = f'Task Plan  [dim]{done}/{total}[/dim]'
+    return Panel(text, title=title, border_style='cyan', box=box.ROUNDED)
+
+def show_task_plan(queue):
+    """Print initial task plan (static)."""
+    console.print(_build_task_panel(queue))
+    console.print()
+
+def update_task_display(queue):
+    """Reprint the task panel in place."""
+    console.print(_build_task_panel(queue))

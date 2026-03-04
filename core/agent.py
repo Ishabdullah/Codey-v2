@@ -186,11 +186,31 @@ def enrich_message(user_message):
         )
     return user_message
 
-def run_agent(user_message, history, yolo=False, use_plan=False):
+def run_agent(user_message, history, yolo=False, use_plan=False, _in_subtask=False):
     used, total = get_context_usage([{"role": "system", "content": build_system_prompt()}])
     if used < total * 0.5:
         auto_load_from_prompt(user_message)
     enriched = enrich_message(user_message)
+    # Orchestrator — complex tasks get broken into subtask queue
+    from core.orchestrator import is_complex, plan_tasks, run_queue
+    from core.display import show_task_plan
+    if is_complex(user_message) and not _in_subtask:
+        info("Planning subtasks...")
+        queue = plan_tasks(user_message, read_codeymd())
+        if len(queue.tasks) > 1:
+            show_task_plan(queue)
+            try:
+                ans = input("  Execute this plan? [Y/n]: ").strip().lower()
+            except (EOFError, KeyboardInterrupt):
+                ans = "n"
+            if ans in ("n", "no"):
+                return "[Cancelled]", history
+            run_queue(queue, yolo=yolo)
+            summary = "Completed " + str(queue.done_count()) + "/" + str(len(queue.tasks)) + " tasks."
+            history.append({"role": "user",     "content": user_message})
+            history.append({"role": "assistant", "content": summary})
+            return summary, history
+
     if use_plan:
         from core.planner import get_plan, show_and_confirm_plan
         info("Generating plan...")
@@ -260,7 +280,7 @@ def run_agent(user_message, history, yolo=False, use_plan=False):
                 auto_retries += 1
                 warning("Error detected — auto-retry " + str(auto_retries) + "/" + str(max_retries))
                 messages.append({"role": "assistant", "content": "<tool>\n" + json.dumps(tool_dict) + "\n</tool>"})
-                messages.append({"role": "user", "content": "Error:\n" + last_tool_result + "\n\nFix it."})
+                messages.append({"role": "user", "content": "Error:\n" + last_tool_result + "\n\nFix the implementation file only. Never modify test files. After fixing, run the tests again to verify."})
                 continue
             messages.append({"role": "assistant", "content": "<tool>\n" + json.dumps(tool_dict) + "\n</tool>"})
             messages.append({"role": "user", "content": "Tool result: " + last_tool_result[:500] + "\nNext action or final answer:"})

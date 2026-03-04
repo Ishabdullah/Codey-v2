@@ -10,7 +10,33 @@ from core.filehistory import snapshot
 def tool_read_file(path: str) -> str:
     return read_file(path)
 
+
+PROTECTED_FILES = {
+    "main.py", "agent.py", "inference.py", "loader.py", "config.py",
+    "system_prompt.py", "file_tools.py", "patch_tools.py", "shell_tools.py",
+    "logger.py", "orchestrator.py", "taskqueue.py", "display.py",
+    "memory.py", "context.py", "sessions.py", "tdd.py", "planner.py",
+}
+
+def _is_protected(path):
+    from pathlib import Path as _P
+    import os as _os
+    fname = _P(path).name
+    codey_dir = _P(__file__).parent.parent.resolve()
+    target = _P(path).expanduser().resolve()
+    try:
+        target.relative_to(codey_dir)
+        in_codey = True
+    except ValueError:
+        in_codey = False
+    return in_codey and fname in PROTECTED_FILES
+
 def tool_write_file(path: str, content: str) -> str:
+    # Fix escaped quotes from model JSON confusion
+    if content and '\\"' in content:
+        content = content.replace('\\"', '"').replace("\\'", "'")
+    if _is_protected(path):
+        return f"[BLOCKED] {path} is a protected Codey source file and cannot be modified by agents."
     # Snapshot before overwriting
     snapshot(path)
 

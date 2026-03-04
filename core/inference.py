@@ -2,6 +2,8 @@ import subprocess
 import os
 import time
 import json
+
+last_tps = 0.0  # tokens per second from last inference
 import urllib.request
 import urllib.error
 import sys
@@ -73,6 +75,7 @@ def stop_server():
         _server_proc = None
 
 def infer(messages: list[dict], stream: bool = True, extra_stop: list = None) -> str:
+    global last_tps
     _start_server()
     cfg = MODEL_CONFIG
 
@@ -101,6 +104,8 @@ def infer(messages: list[dict], stream: bool = True, extra_stop: list = None) ->
 
     response_text = ""
 
+    import time as _time
+    _t0 = _time.time()
     try:
         with urllib.request.urlopen(req, timeout=300) as resp:
             if stream:
@@ -120,10 +125,24 @@ def infer(messages: list[dict], stream: bool = True, extra_stop: list = None) ->
                     except Exception:
                         continue
                 print()
+                import time as _time
+                _elapsed = _time.time() - _t0
+                if _elapsed > 0 and response_text:
+                    last_tps = round(len(response_text.split()) / _elapsed, 1)
                 sys.stdout.flush()
             else:
                 data = json.loads(resp.read())
                 response_text = data["choices"][0]["message"]["content"]
+                # Capture tokens/sec from timings if available
+                if "usage" in data:
+                    usage = data["usage"]
+                    # llama.cpp puts timing in timings field
+                if "timings" in data:
+                    t = data["timings"]
+                    predicted = t.get("predicted_n", 0)
+                    ms = t.get("predicted_ms", 0)
+                    if ms > 0:
+                        last_tps = round((predicted / ms) * 1000, 1)
 
     except urllib.error.URLError as e:
         return f"[ERROR] Server request failed: {e}"
