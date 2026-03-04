@@ -1,365 +1,384 @@
 # Codey
 
-> A fully local AI coding assistant for Android — no internet, no API keys, no cloud.
+A local AI coding assistant for Termux, powered by Qwen2.5-Coder-7B running entirely on-device via llama.cpp. No cloud, no API keys, no data leaving your phone.
 
-Codey runs **Qwen2.5-Coder-7B-Instruct** entirely on your phone via **llama.cpp**. It writes files, runs shell commands, fixes errors automatically, remembers your projects, and can drive a full TDD loop — all offline.
+```
+  ██████╗ ██████╗ ██████╗ ███████╗██╗   ██╗
+ ██╔════╝██╔═══██╗██╔══██╗██╔════╝╚██╗ ██╔╝
+ ██║     ██║   ██║██║  ██║█████╗   ╚████╔╝
+ ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
+ ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
+  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
+  v0.9.0 · Local AI Coding Assistant · Termux
+```
 
-<br>
+---
+
+## Features
+
+- **ReAct agent loop** — thinks, calls tools, observes results, repeats
+- **Task orchestrator** — breaks complex tasks into subtask queues with a live checklist UI
+- **Tiered memory** — LRU file eviction, relevance scoring, rolling summaries (4096 token budget)
+- **CODEY.md** — persistent project memory loaded on every session
+- **TDD loop** — write → test → fix → verify cycle with pytest
+- **File tools** — `write_file`, `patch_file`, `read_file`, `append_file`, `list_dir`
+- **Shell execution** — runs commands with auto-retry on errors
+- **Session persistence** — opt-in resume via `--session` flag
+- **Source file protection** — agents cannot modify Codey's own source files
+- **Claude Code-style UI** — syntax-highlighted panels, colored diffs, task checklists
+- **Context bar** — live token usage + tokens/sec display
+- **Auto-summarization** — compresses long conversation history to save context
+- **File undo/diff** — `/undo` and `/diff` commands for any Codey-edited file
+- **Project detection** — auto-detects Python, Node, Rust, Go projects
+- **Search** — grep across project files with `/search`
+- **Git integration** — commit and push from chat with `/git`
+
+---
+
+## Requirements
+
+- **Termux** on Android
+- **RAM:** 5GB+ available (model uses ~4.4GB)
+- **Storage:** ~5GB for model + ~500MB for llama.cpp
+- **Python:** 3.12+
+- **Packages:** `rich` (`pip install rich`)
+
+---
 
 ## Installation
 
-**One command on a fresh Termux install:**
+### 1. Install llama.cpp
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/Ishabdullah/Codey/main/install.sh | bash
+pkg install cmake ninja clang
+git clone https://github.com/ggerganov/llama.cpp ~/llama.cpp
+cd ~/llama.cpp
+cmake -B build -DLLAMA_CURL=OFF
+cmake --build build --config Release -j4
 ```
 
-Or clone and run manually:
+### 2. Download the model
+
+```bash
+mkdir -p ~/models/qwen2.5-coder-7b
+cd ~/models/qwen2.5-coder-7b
+# Download Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf from HuggingFace
+# ~4.7GB download
+```
+
+### 3. Install Codey
 
 ```bash
 git clone https://github.com/Ishabdullah/Codey.git ~/codey
-bash ~/codey/install.sh
+pip install rich
 ```
 
-The installer handles everything:
-- System packages (`python`, `git`, `clang`, `cmake`)
-- Builds `llama.cpp` from source
-- Downloads `Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf` (~4.5 GB)
-- Installs Python dependencies (`rich`, `pytest`)
-- Adds `codey` to your PATH
-
-After install:
+### 4. Add to PATH
 
 ```bash
+echo 'export PATH="$HOME/codey:$PATH"' >> ~/.bashrc
 source ~/.bashrc
-codey
+chmod +x ~/codey/codey
 ```
 
-**Requirements:** Android phone with Termux, ~8 GB free storage, ~5 GB free RAM at runtime.
+### 5. Verify
 
-<br>
+```bash
+codey --version
+# Codey v0.9.0
+```
+
+---
 
 ## Usage
 
+### One-shot mode
 ```bash
-# Interactive mode
-codey
-
-# One-shot task
 codey "create a Flask hello world app and run it"
-
-# Skip all confirmations
-codey --yolo "refactor main.py to use argparse"
-
-# Pre-load a file into context
-codey --read main.py "add error handling to this"
-
-# Run a file and auto-fix any errors
-codey --fix broken_script.py
-
-# TDD mode — write, test, fix, repeat
-codey --tdd mymodule.py --tests test_mymodule.py
-
-# Generate project memory file
-codey --init
-
-# Start fresh (ignore saved session)
-codey --no-resume
 ```
 
-<br>
-
-## How It Works
-
-Codey uses a **ReAct agent loop** — reason, act, observe, repeat:
-
-```
-You:   "create calculator.py with add/subtract/multiply/divide and run it"
-
-  ⠸ Thinking...
-
-  ╭─ Creating calculator.py ──────────────────╮
-  │  1  def add(a, b): return a + b           │
-  │  2  def subtract(a, b): return a - b      │
-  │  3  def multiply(a, b): return a * b      │
-  │  4  def divide(a, b):                     │
-  │  5      if b == 0: raise ValueError(...)  │
-  │  6      return a / b                      │
-  ╰───────────────────────────────────────────╯
-
-  ╭─ Shell ────────────────────────────────────╮
-  │  $ python3 calculator.py                   │
-  │  5 3 24 5.0                                │
-  ╰───────────────────────────────────────────╯
-
-  ✓  Created calculator.py with all four functions. All operations verified.
-```
-
-The model runs via **llama-server** on port 8081, started automatically on first query and kept hot for the session.
-
-<br>
-
-## TDD Mode
-
-Codey can drive a full test-driven development loop:
-
+### YOLO mode (skip confirmations)
 ```bash
-# Write your tests first
-cat > test_math.py << 'EOF'
-def test_add():
-    from mathutils import add
-    assert add(2, 3) == 5
-
-def test_divide_by_zero():
-    from mathutils import divide
-    try:
-        divide(1, 0)
-        assert False
-    except ValueError:
-        pass
-EOF
-
-# Codey writes the implementation, runs tests, fixes failures, repeats
-codey --tdd mathutils.py --tests test_math.py
+codey --yolo "create todo.py with add_task remove_task list_tasks"
 ```
 
-```
-  ╭─ Creating mathutils.py ───────────────────╮
-  │  1  def add(a, b): return a + b           │
-  │  2  def divide(a, b):                     │
-  │  3      if b == 0: raise ValueError(...)  │
-  │  4      return a / b                      │
-  ╰───────────────────────────────────────────╯
-
-  Iteration 1/5  ████████████████████  4 passed 0 failed / 4 total
-
-  ╭─ Tests Pass ──────────────────────────────╮
-  │  All 4 tests passing after 1 iteration(s) │
-  ╰───────────────────────────────────────────╯
-
-  ✓  mathutils.py is complete after 1 iteration(s).
+### Interactive chat
+```bash
+codey
+You> fix the bug in main.py
 ```
 
-<br>
+### Pre-load files
+```bash
+codey --read main.py utils.py "refactor the helper functions"
+```
+
+### Resume a session
+```bash
+codey --session abc123
+```
+
+### Generate project memory
+```bash
+codey --init
+```
+
+### TDD mode
+```bash
+codey --tdd "create a calculator with add subtract multiply divide"
+```
+
+### Plan mode (confirm before executing)
+```bash
+codey --plan "refactor the entire auth module"
+```
+
+---
 
 ## Chat Commands
 
+### File Commands
 | Command | Description |
 |---|---|
-| `/read <file>` | Load a file into context |
-| `/load <file\|*.py\|dir/>` | Load file, glob pattern, or whole directory |
+| `/read <file>` | Load file into context |
+| `/load <file\|*.py\|dir/>` | Load file, glob pattern, or directory |
 | `/unread <file>` | Remove file from context |
-| `/context` | Show files in memory with age info |
-| `/diff [file]` | Show what Codey changed (colored diff) |
+| `/context` | Show loaded files with token counts and age |
+| `/diff [file]` | Show colored diff of Codey's changes |
 | `/undo [file]` | Restore file to previous version |
-| `/search <pattern>` | Grep across all project files |
-| `/git [message]` | Stage all and commit |
-| `/git push` | Push to remote |
-| `/git log` | Show recent commits |
-| `/git status` | Show working tree status |
-| `/init` | Analyze project and generate CODEY.md |
-| `/memory` | Show CODEY.md contents |
-| `/memory-status` | Show memory manager stats and rolling summary |
-| `/project` | Show detected project type |
-| `/sessions` | List all saved sessions |
+
+### Project Commands
+| Command | Description |
+|---|---|
+| `/init` | Generate CODEY.md project memory file |
+| `/memory` | Show current CODEY.md contents |
+| `/memory-status` | Show memory manager stats (files, summary, turn) |
+| `/project` | Show detected project type and key files |
+| `/search <pattern> [path]` | Search across project files |
+| `/git [commit\|push\|status]` | Git operations from chat |
 | `/cwd [path]` | Show or change working directory |
-| `/clear` | Clear history, context, undo history, and session |
+
+### Session Commands
+| Command | Description |
+|---|---|
+| `/clear` | Clear history, file context, and undo history |
+| `/exit` | Quit Codey |
 | `/help` | Show all commands |
-| `/exit` | Save session and quit |
 
-<br>
+---
 
-## Tools
+## CLI Flags
 
-The model can call these tools autonomously:
+| Flag | Description |
+|---|---|
+| `--yolo` | Skip all confirmations |
+| `--plan` | Show and confirm plan before executing |
+| `--tdd` | Enable TDD loop (write→test→fix→verify) |
+| `--session <id>` | Resume a saved session |
+| `--read <file>` | Pre-load files into context |
+| `--init` | Generate CODEY.md and exit |
+| `--chat` | Interactive mode even with an initial prompt |
+| `--threads <n>` | Override CPU thread count |
+| `--ctx <n>` | Override context window size |
+| `--version` | Show version |
 
+---
+
+## How It Works
+
+### Agent Loop (ReAct)
+```
+User prompt
+    ↓
+Build system prompt (SYSTEM_PROMPT + CODEY.md + relevant files)
+    ↓
+Infer → parse tool call → execute tool → observe result
+    ↓ (loop until done or max steps)
+Final answer
+```
+
+### Tool Call Format
+The model outputs tool calls in this format:
+```
+<tool>
+{"name": "write_file", "args": {"path": "hello.py", "content": "print('hello')"}}
+</tool>
+```
+
+### Available Tools
 | Tool | Description |
 |---|---|
 | `write_file` | Create or overwrite a file |
-| `patch_file` | Surgical find/replace — faster than full rewrites |
-| `read_file` | Read a file's contents |
+| `patch_file` | Surgical find/replace within a file |
+| `read_file` | Read file contents |
 | `append_file` | Append to a file |
 | `list_dir` | List directory contents |
-| `shell` | Run a shell command |
-| `search_files` | Find files by pattern |
+| `shell` | Execute a shell command |
+| `search_files` | Grep pattern across files |
 
-File writes and shell commands prompt for confirmation by default. Use `--yolo` to skip all prompts.
+### Task Orchestrator
+For complex multi-step tasks (>100 chars with 3+ action signals), Codey plans subtasks first:
+```
+╭─────────────────── Task Plan  0/3 ───────────────────╮
+│   ☐  1. Create todo.py with add_task remove_task...  │
+│   ☐  2. Create test_todo.py with 3 pytest tests      │
+│   ☐  3. Run tests and fix any failures               │
+╰──────────────────────────────────────────────────────╯
+  Execute this plan? [Y/n]:
+```
 
-<br>
+Each subtask runs in an isolated context. The checklist updates live with ✓ as tasks complete.
+
+### Memory Architecture
+```
+┌──────────────────────────────────────────┐
+│           4096 TOKEN WINDOW              │
+├──────────────┬───────────────────────────┤
+│ FIXED (~700) │ System prompt + CODEY.md  │
+├──────────────┼───────────────────────────┤
+│ ANCHOR (~300)│ Rolling work summary      │ ← compressed history
+├──────────────┼───────────────────────────┤
+│ DYNAMIC(~800)│ Relevant files only       │ ← LRU + relevance scored
+├──────────────┼───────────────────────────┤
+│ HOT (~500)   │ Last 3 conversation turns │ ← always kept
+├──────────────┼───────────────────────────┤
+│ CURRENT(~300)│ This message              │
+├──────────────┼───────────────────────────┤
+│ RESPONSE(~1296)│ Model output budget     │
+└──────────────┴───────────────────────────┘
+```
+
+---
 
 ## CODEY.md — Project Memory
 
-Run `/init` or `codey --init` in any project directory to generate a `CODEY.md` file. Codey auto-loads this on every session so it always knows your project's stack, structure, and conventions without re-explaining.
+Run `/init` in any project directory to generate a `CODEY.md` file. Codey auto-loads this on every session, giving it accurate context about your project without wasting tokens on repeated directory scans.
 
-```bash
-cd ~/myproject
-codey --init
-# Generates CODEY.md with project summary
-codey "add input validation to the API endpoints"
-# Already knows your stack, file structure, and conventions
+Example:
+```markdown
+# Project
+A FastAPI REST API for task management.
+
+# Stack
+- Python 3.12, FastAPI, SQLite, pytest
+
+# Structure
+- main.py — app entry point and routes
+- models.py — SQLAlchemy models
+- tests/ — pytest test suite
+
+# Commands
+- Run: uvicorn main:app --reload
+- Test: pytest tests/
 ```
 
-Edit `CODEY.md` freely — it's plain markdown injected into the system prompt every session.
+---
 
-<br>
+## Performance
 
-## Smart Context Management
+| Metric | Value |
+|---|---|
+| Model | Qwen2.5-Coder-7B-Instruct Q4_K_M |
+| RAM usage | ~4.4GB |
+| Context window | 4096 tokens |
+| Threads | 4 (configurable) |
+| Speed | ~7-8 t/s on modern Android |
+| Cold start | ~15s first inference |
+| Warm inference | ~2-3s |
 
-Codey uses a tiered memory system to maintain effective context across long sessions:
-
-```
-┌─────────────────────────────────────────┐
-│           4096 TOKEN WINDOW              │
-├─────────────────────────────────────────┤
-│  System prompt + CODEY.md   (~700 tok)  │
-│  Rolling work summary       (~300 tok)  │
-│  Relevant files (LRU)       (~800 tok)  │
-│  Recent turns (last 3)      (~600 tok)  │
-│  Current message            (~300 tok)  │
-│  Response budget            (~1396 tok) │
-└─────────────────────────────────────────┘
-```
-
-- **LRU eviction** — files not referenced in 3+ turns are dropped automatically
-- **Relevance scoring** — only files relevant to your current task are injected
-- **Rolling summary** — completed tasks are compressed into a work log instead of dropped
-- **History compression** — long conversations are summarized via inference to prevent overflow
-
-<br>
-
-## Session Persistence
-
-Codey saves your conversation history between sessions:
-
-```bash
-codey --yolo "create auth.py with login and logout functions"
-# ... session ends ...
-
-codey
-# ℹ  Resumed session: 2 turns from 14:32
-# Codey remembers what you were working on
-```
-
-Sessions are stored per-project in `~/.codey_sessions/`. Use `--no-resume` to start fresh or `/clear` to wipe the current session.
-
-<br>
+---
 
 ## Configuration
 
-All settings in `utils/config.py`:
+Edit `~/codey/utils/config.py`:
 
 ```python
 MODEL_CONFIG = {
-    "n_ctx":       4096,   # context window
-    "n_threads":   6,      # CPU threads (tune to your device)
-    "batch_size":  256,    # processing batch size
-    "kv_type":     "q8_0", # KV cache quantization
-    "max_tokens":  1024,   # max tokens per response
-    "temperature": 0.2,    # lower = more deterministic
+    "n_ctx":          4096,   # context window
+    "n_threads":      4,      # CPU threads (lower = less heat)
+    "n_batch":        256,    # batch size
+    "max_tokens":     1024,   # max response length
+    "temperature":    0.2,    # lower = more deterministic
+    "top_p":          0.95,
+    "top_p":          40,
+    "repeat_penalty": 1.1,
+    "kv_cache_type":  "q8_0", # quantized KV cache saves RAM
+}
+
+AGENT_CONFIG = {
+    "max_steps":      6,      # tool call limit per task
+    "history_turns":  6,      # conversation turns to keep
+    "confirm_shell":  True,   # ask before running shell commands
+    "confirm_write":  True,   # ask before writing files
 }
 ```
 
-**Environment variable overrides:**
-
-```bash
-export CODEY_MODEL="$HOME/models/my-model.gguf"
-export CODEY_THREADS=4
-```
-
-<br>
-
-## RAM Usage
-
-| Component | Size |
-|---|---|
-| Model weights (Q4_K_M) | ~3.9 GB |
-| KV cache (Q8_0, 4096 ctx) | ~112 MB |
-| Compute buffers | ~200 MB |
-| llama-server + Python | ~180 MB |
-| **Total** | **~4.4 GB** |
-
-If your phone crashes during inference, reduce `n_ctx` to `2048` or `1024` in `utils/config.py`.
-
-<br>
+---
 
 ## Project Structure
 
 ```
-codey/
-├── install.sh                # One-shot installer for fresh Termux
-├── main.py                   # CLI entrypoint, REPL, all commands
-├── codey                     # Shell wrapper (on PATH)
-├── CODEY.md                  # Project memory (auto-generated)
+~/codey/
+├── main.py                 # CLI entrypoint, REPL, command handling
+├── codey                   # shell launcher script
+├── CODEY.md                # project memory for Codey itself
 ├── core/
-│   ├── agent.py              # ReAct tool loop, hallucination guard
-│   ├── inference.py          # llama-server HTTP client
-│   ├── loader.py             # Binary and model validation
-│   ├── memory.py             # MemoryManager: LRU, relevance, summary
-│   ├── context.py            # File context (delegates to memory)
-│   ├── display.py            # Claude Code style UI panels
-│   ├── tdd.py                # TDD loop: write, test, fix, repeat
-│   ├── sessions.py           # Session persistence
-│   ├── planner.py            # Plan mode for complex tasks
-│   ├── project.py            # Project type detection
-│   ├── codeymd.py            # CODEY.md read/write/generate
-│   ├── filehistory.py        # Undo/diff snapshots
-│   ├── fixmode.py            # --fix mode: run and auto-patch
-│   ├── githelper.py          # /git commands
-│   ├── search.py             # /search: grep across project
-│   └── summarizer.py         # Legacy conversation compression
-├── prompts/
-│   └── system_prompt.py      # System prompt and tool format
+│   ├── agent.py            # ReAct tool loop, hallucination guard
+│   ├── inference.py        # llama-server HTTP client, TPS tracking
+│   ├── loader.py           # binary/model path validation
+│   ├── orchestrator.py     # task planning and queue execution
+│   ├── taskqueue.py        # persistent task queue (JSON)
+│   ├── display.py          # Rich UI panels, checklists, diffs
+│   ├── memory.py           # MemoryManager: LRU + relevance scoring
+│   ├── context.py          # file context wrapper over MemoryManager
+│   ├── sessions.py         # session save/load/list
+│   ├── tdd.py              # TDD loop: write→test→fix→verify
+│   ├── planner.py          # plan mode: generate and confirm plan
+│   ├── summarizer.py       # conversation compression
+│   ├── codeymd.py          # CODEY.md read/write/generate
+│   ├── tokens.py           # token counting, context bar, TPS
+│   └── project.py          # project type detection
 ├── tools/
-│   ├── file_tools.py         # write/read/append with confirmation
-│   ├── patch_tools.py        # Surgical find/replace
-│   └── shell_tools.py        # Shell execution with safety checks
+│   ├── file_tools.py       # write/read/append/list + PROTECTED_FILES
+│   ├── patch_tools.py      # surgical find/replace with undo snapshot
+│   └── shell_tools.py      # shell execution with safety checks
+├── prompts/
+│   └── system_prompt.py    # system prompt and tool format
 └── utils/
-    ├── config.py             # All settings
-    ├── logger.py             # Rich terminal output
-    └── file_utils.py         # Low-level file helpers
+    ├── config.py           # all settings
+    ├── logger.py           # rich terminal output helpers
+    └── file_utils.py       # low-level file operations
 ```
 
-<br>
+---
 
 ## Version History
 
-| Version | Features |
+| Version | Highlights |
 |---|---|
-| v0.1.0 | ReAct agent loop, file tools, shell tools, llama-server backend |
-| v0.2.0 | File context injection, auto filename detection, auto error retry |
-| v0.3.0 | CODEY.md project memory, `/init`, conversation summarization |
-| v0.4.0 | `/diff`, `/undo`, `/load` with glob and directory support |
-| v0.5.0 | Session persistence, `--fix` mode, `/search`, `/git` |
-| v0.6.0 | `patch_file` tool, plan mode, token usage bar, hallucination guard |
-| v0.7.0 | MemoryManager: LRU eviction, relevance scoring, 4096 ctx window |
-| v0.8.0 | TDD loop (`--tdd`), Claude Code style UI panels, thinking spinner |
+| v0.1.0 | ReAct agent, llama-server backend, basic file/shell tools |
+| v0.2.0 | Confirmation prompts, error handling, tool call improvements |
+| v0.3.0 | CODEY.md project memory, /init, conversation summarization |
+| v0.4.0 | /diff, /undo, /load with glob and directory support |
+| v0.5.0 | Session persistence, --fix mode, /search, /git |
+| v0.6.0 | patch_file tool, plan mode, token usage bar, hallucination guard |
+| v0.7.0 | MemoryManager with LRU eviction and relevance scoring, ctx=4096 |
+| v0.8.0 | TDD loop, Claude Code-style UI panels, syntax highlighting |
+| v0.9.0 | Task orchestrator, subtask queues, source file protection, TPS display |
 
-<br>
+---
 
-## Troubleshooting
+## Known Limitations
 
-**Phone crashes during inference**
-Reduce context window in `utils/config.py`: `"n_ctx": 2048`
+- **7B model quality** — complex multi-file refactors may require guidance
+- **4096 token window** — large projects need selective file loading
+- **Serial execution** — no parallel tool calls or async inference
+- **No repo indexing** — no vector DB or Tree-sitter; relies on explicit file loading
+- **Termux only** — shell commands assume Linux/Android environment
 
-**Model download interrupted**
-Re-run `install.sh` — wget/curl will resume from where it stopped.
-
-**`codey` command not found after install**
-Run `source ~/.bashrc` or open a new Termux session.
-
-**llama-server fails to start**
-Check the binary exists: `ls ~/llama.cpp/build/bin/llama-server`
-If missing, re-run `install.sh` which will rebuild from source.
-
-**Out of storage during build**
-llama.cpp build artifacts use ~1.5 GB temporarily. Free space or build on external storage.
-
-**Model answers poorly or hallucinates repeatedly**
-Run `codey --clear-session` to wipe poisoned history, then retry with a fresh session.
-
-<br>
+---
 
 ## License
 
-MIT — see [LICENSE](LICENSE)
+MIT
 
