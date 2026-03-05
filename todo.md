@@ -1,23 +1,17 @@
-# Codey v0.9.2 Implementation Todo
+# Codey v0.9.3 Implementation Todo
 
-## P1 — Stability (Final)
+## P3 — Features
 
-- [x] 1. Fix brittle JSON parser (core/agent.py)
-- [x] 2. Fix patch_file collision risk (tools/patch_tools.py)
-- [x] 3. Add .codeyignore support (core/context.py)
-- [x] 4. Portable paths (Move llama-server/model paths to config.py with auto-detect)
-
-## P2 — Security Hardening
-
-- [x] 5. Harden shell blacklist -> allowlist approach (tools/shell_tools.py)
-    - Warning + confirmation for rm, curl, wget, chmod, dd, mkfs.
-- [x] 6. Mask secrets in session saves (core/sessions.py)
-    - Redact API keys, passwords, tokens from history before saving.
-- [x] 7. Workspace root restriction
-    - Block file operations outside the workspace unless explicitly confirmed.
+- [x] 7. Better patch_file with context lines (tools/patch_tools.py)
+    - Match on full context block, replace only target lines.
+- [x] 8. Move hardcoded paths to config (utils/config.py, core/inference.py)
+- [x] 9. Auto-commit after successful tasks (core/agent.py)
+    - Offer git commit after task completion or test pass.
+- [x] 10. Lightweight Repo Map (core/project.py, core/agent.py)
+    - Scan symbols and inject into system prompt.
 
 ## Release
 
-- [x] 8. Update task-list.txt
-- [x] 9. Bump version to 0.9.2
-- [ ] 10. Push to GitHub
+- [x] 11. Update task-list.txt
+- [x] 12. Bump version to 0.9.3
+- [x] 13. Push to GitHub

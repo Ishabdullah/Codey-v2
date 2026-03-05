@@ -211,6 +211,12 @@ def build_system_prompt(message=""):
         proj = get_project_summary()
         if proj:
             parts.append("\n## Current Project\n" + proj)
+            
+    from core.project import get_repo_map
+    repo_map = get_repo_map()
+    if repo_map:
+        parts.append("\n" + repo_map)
+
     # Memory-aware: only inject files relevant to current message
     file_ctx = build_file_context_block(message)
     if file_ctx:
@@ -230,6 +236,34 @@ def enrich_message(user_message):
             "Prefer patch_file for small edits. Use write_file only for new files or full rewrites."
         )
     return user_message
+
+def check_git_and_offer_commit(user_message, tools_used):
+    if not tools_used:
+        return
+    # Only offer if write_file or patch_file was used
+    if not any("write_file" in s or "patch_file" in s for s in tools_used):
+        return
+        
+    from core.githelper import is_git_repo, git_status, git_commit
+    from utils.logger import confirm as ask_confirm, info, success, error
+    
+    if not is_git_repo():
+        return
+        
+    status = git_status()
+    if status == "Nothing to commit.":
+        return
+        
+    info("\nChanges detected. Reviewing git status...")
+    print(status)
+    if ask_confirm("\nStage all and commit these changes?"):
+        # Simple heuristic for commit message from user request
+        msg = f"Codey: {user_message[:50]}..."
+        res = git_commit(msg)
+        if res.startswith("[ERROR]"):
+            error(res)
+        else:
+            success(f"Committed: {msg}")
 
 def run_agent(user_message, history, yolo=False, use_plan=False, _in_subtask=False):
     used, total = get_context_usage([{"role": "system", "content": build_system_prompt()}])
@@ -351,6 +385,10 @@ def run_agent(user_message, history, yolo=False, use_plan=False, _in_subtask=Fal
         separator()
         history.append({"role": "user",     "content": user_message})
         history.append({"role": "assistant", "content": response})
+        if not _in_subtask:
+            check_git_and_offer_commit(user_message, tools_used)
         return response, history
     warning("Reached max steps (" + str(max_steps) + ").")
+    if not _in_subtask:
+        check_git_and_offer_commit(user_message, tools_used)
     return "[Max steps reached]", history

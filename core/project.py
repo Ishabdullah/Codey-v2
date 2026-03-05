@@ -29,6 +29,58 @@ CONTEXT_FILES = [
 _project_cache: dict = {}
 _last_cwd: str = ""
 
+def get_repo_map(cwd: str = None) -> str:
+    """Generate a lightweight map of the project (symbols, classes, imports)."""
+    from core.context import is_ignored
+    cwd = Path(cwd or os.getcwd())
+    
+    # Only scan these extensions
+    map_exts = {".py", ".js", ".ts", ".c", ".cpp", ".rs", ".go"}
+    
+    # Heuristic for symbols
+    patterns = [
+        r"^class\s+(\w+)",
+        r"^def\s+(\w+)",
+        r"^function\s+(\w+)",
+        r"^async\s+def\s+(\w+)",
+        r"^export\s+(?:async\s+)?(?:function|class)\s+(\w+)",
+        r"^(?:import|from)\s+[\w.]+",
+    ]
+    import re
+    
+    repo_map = []
+    
+    # Limit to first 50 relevant files to keep it fast
+    try:
+        files = sorted([
+            f for f in cwd.rglob("*")
+            if f.is_file()
+            and f.suffix in map_exts
+            and not is_ignored(f)
+        ])[:50]
+    except Exception:
+        return ""
+        
+    for f in files:
+        rel = f.relative_to(cwd)
+        try:
+            content = f.read_text(encoding="utf-8", errors="replace")
+            symbols = []
+            for line in content.splitlines():
+                line = line.strip()
+                if any(re.search(p, line) for p in patterns):
+                    # Clean up the line for the map
+                    symbols.append(line[:80])
+            if symbols:
+                repo_map.append(f"📄 {rel}:\n  " + "\n  ".join(symbols[:15]))
+        except Exception:
+            continue
+            
+    if not repo_map:
+        return ""
+        
+    return "## Project Map\n" + "\n\n".join(repo_map)
+
 def detect_project(cwd: str = None) -> dict:
     """
     Detect project type and gather context from cwd.

@@ -22,16 +22,16 @@ Codey v0.9.x → v1.0.0 Task List
    - Block file reads/writes outside workspace unless absolute path is explicitly confirmed
 
 🟡 P3 — Features (Medium Effort, High Payoff)
-7. Better patch_file with context lines
+7. Better patch_file with context lines [DONE]
    - Require model to include 2 lines before and after the change for uniqueness
    - Match on full context block, replace only the target lines
-8. Move hardcoded paths to config (core/inference.py)
+8. Move hardcoded paths to config (core/inference.py) [DONE]
    - llama-server path and model path into utils/config.py
    - Auto-detect via which llama-server fallback
-9. Auto-commit after successful tasks (/git enhancement)
+9. Auto-commit after successful tasks (/git enhancement) [DONE]
    - After tests pass or task completes cleanly, offer git add -A && git commit -m "Codey: <task summary>"
    - Already have /git command, just wire it to task completion
-10. Repo map (lightweight)
+10. Repo map (lightweight) [DONE]
     - On startup, scan project for def, class, import lines only (no full file content)
     - Inject as compressed ## Project Structure block — like Aider's repo map but without Tree-sitter
 
