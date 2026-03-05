@@ -1,4 +1,5 @@
 import os
+import shutil
 from pathlib import Path
 
 CODEY_DIR = Path(os.environ.get("CODEY_DIR", Path.home() / "codey"))
@@ -6,6 +7,11 @@ MODEL_PATH = Path(os.environ.get(
     "CODEY_MODEL",
     Path.home() / "models" / "qwen2.5-coder-7b" / "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
 ))
+
+# Detection of llama-server binary and library path
+_HOME_LLAMA = Path.home() / "llama.cpp" / "build" / "bin"
+LLAMA_SERVER_BIN = os.environ.get("CODEY_LLAMA_SERVER") or shutil.which("llama-server") or str(_HOME_LLAMA / "llama-server")
+LLAMA_LIB = os.environ.get("CODEY_LLAMA_LIB") or str(_HOME_LLAMA)
 
 MODEL_CONFIG = {
     "n_ctx":          4096,
@@ -30,5 +36,8 @@ AGENT_CONFIG = {
     "history_turns":  3,
 }
 
-CODEY_VERSION = "0.9.1"
+CODE_DIR = Path(__file__).parent.parent.resolve()
+WORKSPACE_ROOT = Path(os.getcwd()).resolve()
+
+CODEY_VERSION = "0.9.2"
 CODEY_NAME    = "Codey"

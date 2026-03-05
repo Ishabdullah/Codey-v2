@@ -2,27 +2,38 @@ import subprocess
 from utils.logger import warning, confirm as ask_confirm
 from utils.config import AGENT_CONFIG
 
-# Commands that always require confirmation
-DANGEROUS_PATTERNS = [
-    "rm ", "rmdir", "mkfs", "dd ", "chmod 777",
-    ":(){:|:&};:", "mv /", "sudo rm", "> /dev/",
+# Commands that always require confirmation unless in YOLO mode
+DANGEROUS_COMMANDS = [
+    "rm", "rmdir", "mkfs", "dd", "chmod", "wget", "curl", "mv", "cp",
 ]
 
 def is_dangerous(command: str) -> bool:
+    cmd_parts = command.split()
+    if not cmd_parts:
+        return False
+    # Check if the primary command is in our list
+    base_cmd = Path(cmd_parts[0]).name
+    if base_cmd in DANGEROUS_COMMANDS:
+        return True
+    # Still check for dangerous patterns like pipe to sh
     cmd_lower = command.lower()
-    return any(p in cmd_lower for p in DANGEROUS_PATTERNS)
+    dangerous_patterns = ["sudo ", "> /dev/", "| sh", "| bash", ":(){:|:&};:"]
+    return any(p in cmd_lower for p in dangerous_patterns)
 
 def shell(command: str, yolo: bool = False, timeout: int = 30) -> str:
     """
     Execute a shell command. Returns combined stdout + stderr.
     Prompts for confirmation on dangerous or any command if confirm_shell=True.
     """
+    should_confirm = False
+    
     if is_dangerous(command):
-        warning(f"Potentially dangerous command: {command}")
-        if not ask_confirm("Run this command?"):
-            return "[CANCELLED] User declined to run command."
-
+        warning(f"Potentially dangerous command: `{command}`")
+        should_confirm = True
     elif AGENT_CONFIG["confirm_shell"] and not yolo:
+        should_confirm = True
+
+    if should_confirm and not yolo:
         if not ask_confirm(f"Run shell command: `{command}`?"):
             return "[CANCELLED] User declined to run command."
 

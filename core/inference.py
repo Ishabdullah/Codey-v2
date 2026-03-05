@@ -8,11 +8,9 @@ import urllib.request
 import urllib.error
 import sys
 from pathlib import Path
-from utils.config import MODEL_CONFIG, MODEL_PATH
+from utils.config import MODEL_CONFIG, MODEL_PATH, LLAMA_SERVER_BIN, LLAMA_LIB
 from utils.logger import error, info
 
-LLAMA_SERVER_BIN = str(Path.home() / "llama.cpp/build/bin/llama-server")
-LLAMA_LIB       = str(Path.home() / "llama.cpp/build/bin")
 SERVER_URL       = "http://127.0.0.1:8081"
 CHAT_URL         = f"{SERVER_URL}/v1/chat/completions"
 HEALTH_URL       = f"{SERVER_URL}/health"

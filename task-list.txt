@@ -1,23 +1,23 @@
 Codey v0.9.x → v1.0.0 Task List
 
 🔴 P1 — Stability (Do First, Highest Impact)
-1. Fix brittle JSON parser (core/agent.py lines 60-90)
+1. Fix brittle JSON parser (core/agent.py lines 60-90) [DONE]
    - Replace regex depth-counting with a proper lazy JSON extractor
    - This breaks the agent loop on malformed output — most frequent failure mode
-2. Fix patch_file collision risk (tools/patch_tools.py)
+2. Fix patch_file collision risk (tools/patch_tools.py) [DONE]
    - Add uniqueness check: if old_str appears more than once, reject and ask model to provide more context
    - Add line count to error message so model knows what it's working with
-3. Add .codeyignore
+3. Add .codeyignore [DONE]
    - Prevent auto_load_from_prompt and /load from reading .env, *.pem, *.key, secrets
    - Simple pattern file in project root, checked before any file load
 
 🟠 P2 — Security (High Value, Manageable Effort)
-4. Harden shell blacklist → allowlist approach (tools/shell_tools.py)
+4. Harden shell blacklist → allowlist approach (tools/shell_tools.py) [DONE]
    - Replace DANGEROUS_PATTERNS blacklist with a warning + confirmation for any command containing rm, curl, wget, chmod, dd, mkfs
    - Add proot sandbox option for Termux
-5. Mask secrets in session saves (core/sessions.py)
+5. Mask secrets in session saves (core/sessions.py) [DONE]
    - Before saving history to JSON, scan for patterns matching API keys, passwords, tokens and redact them
-6. Workspace root restriction
+6. Workspace root restriction [DONE]
    - Add WORKSPACE_ROOT = os.getcwd() at startup
    - Block file reads/writes outside workspace unless absolute path is explicitly confirmed
 

@@ -4,12 +4,29 @@ File tools with confirmation + automatic history snapshots before writes.
 from pathlib import Path
 from utils.file_utils import read_file, write_file, append_file, list_dir
 from utils.logger import confirm as ask_confirm, warning, success
-from utils.config import AGENT_CONFIG
+from utils.config import AGENT_CONFIG, WORKSPACE_ROOT, CODE_DIR
 from core.filehistory import snapshot
 
-def tool_read_file(path: str) -> str:
-    return read_file(path)
+def is_outside_workspace(path: str) -> bool:
+    p = Path(path).expanduser().resolve()
+    try:
+        p.relative_to(WORKSPACE_ROOT)
+        return False
+    except ValueError:
+        # If not relative to workspace, it's outside
+        # Check if it's relative to CODE_DIR (protected anyway)
+        try:
+            p.relative_to(CODE_DIR)
+            return False
+        except ValueError:
+            return True
 
+def tool_read_file(path: str) -> str:
+    if is_outside_workspace(path):
+        warning(f"Accessing file outside workspace: {path}")
+        if not ask_confirm("Confirm read?"):
+            return "[CANCELLED] Read outside workspace denied by user."
+    return read_file(path)
 
 PROTECTED_FILES = {
     "main.py", "agent.py", "inference.py", "loader.py", "config.py",
@@ -19,24 +36,27 @@ PROTECTED_FILES = {
 }
 
 def _is_protected(path):
-    from pathlib import Path as _P
-    import os as _os
-    fname = _P(path).name
-    codey_dir = _P(__file__).parent.parent.resolve()
-    target = _P(path).expanduser().resolve()
+    p = Path(path).expanduser().resolve()
+    fname = p.name
     try:
-        target.relative_to(codey_dir)
-        in_codey = True
+        p.relative_to(CODE_DIR)
+        return fname in PROTECTED_FILES
     except ValueError:
-        in_codey = False
-    return in_codey and fname in PROTECTED_FILES
+        return False
 
 def tool_write_file(path: str, content: str) -> str:
     # Fix escaped quotes from model JSON confusion
     if content and '\\"' in content:
         content = content.replace('\\"', '"').replace("\\'", "'")
+    
     if _is_protected(path):
-        return f"[BLOCKED] {path} is a protected Codey source file and cannot be modified by agents."
+        return f"[BLOCKED] {path} is a protected Codey source file."
+        
+    if is_outside_workspace(path):
+        warning(f"Writing file outside workspace: {path}")
+        if not ask_confirm("Confirm write outside workspace?"):
+            return "[CANCELLED] Write outside workspace denied by user."
+
     # Snapshot before overwriting
     snapshot(path)
 
