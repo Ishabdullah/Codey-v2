@@ -36,8 +36,8 @@ Codey v0.9.x → v1.0.0 Task List
     - Inject as compressed ## Project Structure block — like Aider's repo map but without Tree-sitter
 
 🟢 P4 — Polish (Low Effort, Nice to Have)
-11. Update README.md with current v0.9.0 features, commands, and architecture
-12. Fix "Final Answer:" prefix still leaking into task checklist results
+11. Update README.md with current v0.9.0 features, commands, and architecture [DONE]
+12. Fix "Final Answer:" prefix still leaking into task checklist results [DONE]
 13. Add --no-plan flag to bypass orchestrator even for complex tasks [DONE]
 14. /ignore command to add patterns to .codeyignore from chat [DONE]
 

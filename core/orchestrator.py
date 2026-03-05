@@ -6,7 +6,10 @@ from pathlib import Path
 from core.taskqueue import TaskQueue, STATUS_PENDING, STATUS_RUNNING
 from utils.logger import info, warning
 
-PLAN_PROMPT = 'Break the task into 2-5 numbered steps. Max 5 steps. Each step is a single concrete action: create a file, edit a file, or run a command. Never include steps like "open in editor", "save file", or "navigate to directory". Output ONLY the numbered list.'
+PLAN_PROMPT = """Break the task into 2-5 numbered steps. Max 5 steps. 
+Each step must be a single concrete action: create a file, edit a file, or run a command. 
+NEVER include steps like "open in editor", "save file", "navigate to directory", "review code", or "think about structure". 
+Output ONLY the numbered list of actions."""
 
 COMPLEX_SIGNALS = [
     'create', 'build', 'implement', 'refactor', 'rewrite',
@@ -103,8 +106,16 @@ def run_queue(queue, yolo=False):
 
             try:
                 result, _ = run_agent(prompt, history, yolo=yolo, _in_subtask=True)
-                queue.mark_done(task.id, result)
-                prior_results.append(f'Task {task.id}: {task.description[:60]} -> {result[:80]}')
+                
+                # Strip common redundant prefixes from task result summary
+                summary = result
+                for prefix in ["Done. Final Answer: ", "Final Answer: ", "Done. Final answer: ", "Final answer: "]:
+                    if summary.startswith(prefix):
+                        summary = summary[len(prefix):]
+                        break
+                
+                queue.mark_done(task.id, summary)
+                prior_results.append(f'Task {task.id}: {task.description[:60]} -> {summary[:80]}')
             except KeyboardInterrupt:
                 raise
             except Exception as e:

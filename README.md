@@ -9,7 +9,7 @@ A local AI coding assistant for Termux, powered by Qwen2.5-Coder-7B running enti
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v0.9.0 · Local AI Coding Assistant · Termux
+  v0.9.5 · Local AI Coding Assistant · Termux
 ```
 
 ---
@@ -18,13 +18,17 @@ A local AI coding assistant for Termux, powered by Qwen2.5-Coder-7B running enti
 
 - **ReAct agent loop** — thinks, calls tools, observes results, repeats
 - **Task orchestrator** — breaks complex tasks into subtask queues with a live checklist UI
+- **Repo map** — automatically scans project symbols on startup for better context
 - **Tiered memory** — LRU file eviction, relevance scoring, rolling summaries (4096 token budget)
+- **.codeyignore** — pattern-based file exclusion for context and auto-loading
 - **CODEY.md** — persistent project memory loaded on every session
 - **TDD loop** — write → test → fix → verify cycle with pytest
-- **File tools** — `write_file`, `patch_file`, `read_file`, `append_file`, `list_dir`
-- **Shell execution** — runs commands with auto-retry on errors
+- **File tools** — `write_file`, `patch_file` (with context matching), `read_file`, `append_file`, `list_dir`
+- **Shell execution** — runs commands with auto-retry and security hardening
+- **Workspace restriction** — file operations outside the project root require confirmation
 - **Session persistence** — opt-in resume via `--session` flag
 - **Source file protection** — agents cannot modify Codey's own source files
+- **Auto-commit** — offers to stage and commit changes after successful task completion
 - **Claude Code-style UI** — syntax-highlighted panels, colored diffs, task checklists
 - **Context bar** — live token usage + tokens/sec display
 - **Auto-summarization** — compresses long conversation history to save context
@@ -143,6 +147,7 @@ codey --plan "refactor the entire auth module"
 | `/read <file>` | Load file into context |
 | `/load <file\|*.py\|dir/>` | Load file, glob pattern, or directory |
 | `/unread <file>` | Remove file from context |
+| `/ignore <pattern>` | Add pattern to `.codeyignore` file |
 | `/context` | Show loaded files with token counts and age |
 | `/diff [file]` | Show colored diff of Codey's changes |
 | `/undo [file]` | Restore file to previous version |
@@ -173,6 +178,7 @@ codey --plan "refactor the entire auth module"
 |---|---|
 | `--yolo` | Skip all confirmations |
 | `--plan` | Show and confirm plan before executing |
+| `--no-plan` | Disable orchestrator even for complex tasks |
 | `--tdd` | Enable TDD loop (write→test→fix→verify) |
 | `--session <id>` | Resume a saved session |
 | `--read <file>` | Pre-load files into context |
@@ -348,7 +354,24 @@ AGENT_CONFIG = {
     ├── config.py           # all settings
     ├── logger.py           # rich terminal output helpers
     └── file_utils.py       # low-level file operations
-```
+| `/undo [file]` | Restore file to previous version |
+
+---
+
+## Features In-Depth
+
+### .codeyignore
+Create a `.codeyignore` file in your project root to prevent Codey from reading certain files. It supports glob-style patterns (e.g., `*.log`, `node_modules/`, `secrets/`). 
+Default ignores include: `.git`, `__pycache__`, `.env`, and private keys.
+
+### Repo Map
+Codey automatically generates a lightweight "map" of your project structure (classes, functions, and imports) on startup. This provides the model with architectural context without loading full file contents into the token window.
+
+### Workspace Restriction
+To prevent unintended modifications, Codey restricts its file tools to the current project directory. Any attempt to read or write a file outside the workspace root will trigger a confirmation prompt.
+
+### Auto-Commit
+After completing a task or running successful tests, Codey will check your git status. If changes are detected, it will offer to stage and commit them automatically with a descriptive message based on the task.
 
 ---
 
@@ -356,15 +379,13 @@ AGENT_CONFIG = {
 
 | Version | Highlights |
 |---|---|
-| v0.1.0 | ReAct agent, llama-server backend, basic file/shell tools |
-| v0.2.0 | Confirmation prompts, error handling, tool call improvements |
-| v0.3.0 | CODEY.md project memory, /init, conversation summarization |
-| v0.4.0 | /diff, /undo, /load with glob and directory support |
-| v0.5.0 | Session persistence, --fix mode, /search, /git |
-| v0.6.0 | patch_file tool, plan mode, token usage bar, hallucination guard |
-| v0.7.0 | MemoryManager with LRU eviction and relevance scoring, ctx=4096 |
-| v0.8.0 | TDD loop, Claude Code-style UI panels, syntax highlighting |
+| v0.9.5 | Strip "Final Answer:" from checklists, refined planner prompts |
+| v0.9.4 | Added `--no-plan` flag and `/ignore` command |
+| v0.9.3 | Repo map, auto-commit after tasks, context-aware `patch_file` instructions |
+| v0.9.2 | Portable paths (auto-detect llama-server), shell hardening, session redaction, workspace root restriction |
+| v0.9.1 | P1 stability fixes: robust JSON parser, patch collision checks, `.codeyignore` support |
 | v0.9.0 | Task orchestrator, subtask queues, source file protection, TPS display |
+
 
 ---
 

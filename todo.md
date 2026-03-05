@@ -1,14 +1,25 @@
-# Codey v0.9.4 Implementation Todo
+# Codey v0.9.5 Implementation Todo
 
-## P3/P4 — Features & Polish
+## Bug Fixes & Improvements
 
-- [x] 13. Add --no-plan flag (main.py, core/agent.py)
-    - Bypass orchestrator even for complex tasks.
-- [x] 14. /ignore command (main.py, core/context.py)
-    - Append patterns to .codeyignore from chat.
+- [x] 1. Strip "Final Answer:" prefixes in task checklist (core/orchestrator.py)
+    - Strip "Final Answer: ", "Final answer: ", "Done. Final Answer: ", "Final answer:".
+- [x] 2. Test and fix orchestrator planner prompt (core/orchestrator.py)
+    - Reproduce complex task and verify steps.
+    - Tighten `PLAN_PROMPT` if "Open in editor" style steps appear.
+
+## Documentation
+
+- [x] 3. Update README.md
+    - .codeyignore
+    - Workspace restriction
+    - Repo map
+    - Auto-commit
+    - --no-plan flag
+    - /ignore command
+    - Version history (v0.9.1 - v0.9.4)
 
 ## Release
 
-- [x] 15. Update task-list.txt
-- [x] 16. Bump version to 0.9.4
-- [ ] 17. Push to GitHub
+- [x] 4. Bump version to 0.9.5 (utils/config.py)
+- [x] 5. Push to GitHub

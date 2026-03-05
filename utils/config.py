@@ -39,5 +39,5 @@ AGENT_CONFIG = {
 CODE_DIR = Path(__file__).parent.parent.resolve()
 WORKSPACE_ROOT = Path(os.getcwd()).resolve()
 
-CODEY_VERSION = "0.9.4"
+CODEY_VERSION = "0.9.5"
 CODEY_NAME    = "Codey"
