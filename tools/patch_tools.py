@@ -25,13 +25,22 @@ def tool_patch_file(path: str, old_str: str, new_str: str) -> str:
     except Exception as e:
         return f"[ERROR] Could not read {path}: {e}"
 
-    if old_str not in content:
+    count = content.count(old_str)
+    if count == 0:
         # Give helpful context
         lines = content.splitlines()
         return (
             f"[ERROR] String not found in {path}.\n"
             f"File has {len(lines)} lines. "
             f"Make sure the old_str matches exactly including whitespace."
+        )
+    
+    if count > 1:
+        lines = content.splitlines()
+        return (
+            f"[ERROR] String found {count} times in {path}. "
+            f"Provide more context in 'old_str' to make it unique.\n"
+            f"File has {len(lines)} lines."
         )
 
     # Show diff preview

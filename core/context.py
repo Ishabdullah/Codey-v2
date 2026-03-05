@@ -4,14 +4,59 @@ All file state lives in core.memory.memory singleton.
 """
 import re
 import os
+import fnmatch
 from pathlib import Path
 from utils.logger import success, warning, info
 from core.memory import memory as _mem
 
 _loaded_files = {}  # kept for backward compat — mirrors _mem._files
 
+def is_ignored(path):
+    """Check if a file should be ignored based on .codeyignore or defaults."""
+    p = Path(path).expanduser().resolve()
+    
+    # Defaults
+    ignore_patterns = {
+        ".env", "*.pem", "*.key", ".git", "__pycache__", 
+        ".pytest_cache", ".codey_sessions", "node_modules", ".venv"
+    }
+    
+    # Load .codeyignore if it exists
+    ignore_file = Path(os.getcwd()) / ".codeyignore"
+    if ignore_file.exists():
+        try:
+            for line in ignore_file.read_text().splitlines():
+                line = line.strip()
+                if line and not line.startswith("#"):
+                    ignore_patterns.add(line)
+        except Exception:
+            pass
+            
+    # Check filename and relative path
+    name = p.name
+    try:
+        rel_path = str(p.relative_to(os.getcwd()))
+    except ValueError:
+        rel_path = str(p)
+
+    for pat in ignore_patterns:
+        # Normalize pattern
+        p_pat = pat.rstrip("/")
+        if fnmatch.fnmatch(name, p_pat) or fnmatch.fnmatch(rel_path, p_pat) or fnmatch.fnmatch(rel_path, pat):
+            return True
+        # Check if any part of the path matches
+        for part in p.parts:
+            if fnmatch.fnmatch(part, p_pat):
+                return True
+            
+    return False
+
 def load_file(path):
     """Load a single file into memory."""
+    if is_ignored(path):
+        warning(f"Ignored: {path}")
+        return f"[ERROR] File is ignored by .codeyignore: {path}"
+
     p = Path(path).expanduser()
     if not p.exists():
         p = Path(os.getcwd()) / path
@@ -58,8 +103,7 @@ def load_directory(path, extensions=None, max_files=10):
         f for f in p.rglob("*")
         if f.is_file()
         and f.suffix in exts
-        and not any(part.startswith(".") for part in f.parts)
-        and "__pycache__" not in str(f)
+        and not is_ignored(f)
     ])[:max_files]
     loaded = []
     for f in files:

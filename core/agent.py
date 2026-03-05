@@ -49,32 +49,77 @@ def clean_response(text):
 
 def extract_json(raw):
     raw = raw.strip()
-    depth, end = 0, 0
+    if not raw.startswith('{'):
+        # Try to find the start of a JSON block
+        idx = raw.find('{')
+        if idx != -1:
+            raw = raw[idx:]
+        else:
+            return None
+
+    # Improved depth tracking that ignores braces inside strings
+    depth = 0
+    in_string = False
+    escape = False
+    end = 0
+
     for i, ch in enumerate(raw):
-        if ch == '{':
-            depth += 1
-        elif ch == '}':
-            depth -= 1
-            if depth == 0:
-                end = i + 1
-                break
+        if escape:
+            escape = False
+            continue
+        if ch == '\\':
+            escape = True
+            continue
+        if ch == '"':
+            in_string = not in_string
+            continue
+        if not in_string:
+            if ch == '{':
+                depth += 1
+            elif ch == '}':
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+
     if end == 0:
-        return None
-    candidate = raw[:end]
+        # If we didn't find the end, maybe the model just outputted incomplete JSON
+        # Let's try to close it as a last resort
+        if depth > 0:
+            candidate = raw + ("}" * depth)
+        else:
+            return None
+    else:
+        candidate = raw[:end]
+
+    # Clean candidate for common LLM artifacts
+    # 1. Trailing commas
+    cleaned = re.sub(r',\s*([}\]])', r'\1', candidate)
+    # 2. Unescaped newlines inside strings (common in write_file content)
+    # This is tricky because we only want to escape newlines inside the quotes.
+    # We'll try to let the fallback regex handle this if json.loads fails.
+
     for attempt in [
-        lambda s: __import__('json').loads(s),
-        lambda s: __import__('json').loads(__import__('re').sub(r',\s*([}\]])', r'\1', s)),
+        lambda s: json.loads(s),
+        lambda s: json.loads(cleaned),
+        # Final fallback: manual regex extraction for known keys
     ]:
         try:
-            return attempt(candidate)
+            return attempt(candidate if attempt.__name__ == '<lambda>' else cleaned)
         except Exception:
             pass
+
+    # Final fallback: manual regex extraction for known keys
     result = {}
     for key in ["name", "path", "content", "command", "pattern", "old_str", "new_str"]:
-        m = re.search('"' + key + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"', candidate)
+        m = re.search('"' + key + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"', candidate, re.DOTALL)
+        if not m:
+             # Try without re.DOTALL if it failed, maybe it's multi-line without escaping
+             m = re.search('"' + key + '"\\s*:\\s*"(.*?)"', candidate, re.DOTALL)
         if m:
-            result[key] = m.group(1)
+            result[key] = m.group(1).replace('\\n', '\n').replace('\\"', '"')
             continue
+    
     if result:
         name = result.pop("name", None)
         if name:

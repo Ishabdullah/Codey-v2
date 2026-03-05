@@ -30,5 +30,5 @@ AGENT_CONFIG = {
     "history_turns":  3,
 }
 
-CODEY_VERSION = "0.9.0"
+CODEY_VERSION = "0.9.1"
 CODEY_NAME    = "Codey"
