@@ -50,6 +50,18 @@ AGENT_CONFIG = {
     "history_turns":  3,
 }
 
+# Thermal management - Phase 7
+THERMAL_CONFIG = {
+    "enabled": True,
+    "warn_after_sec": 300,       # 5 minutes - log warning
+    "reduce_threads_after_sec": 600,  # 10 minutes - reduce to 2 threads
+    "min_threads": 2,
+    "original_threads": 4,       # Will be set from MODEL_CONFIG
+}
+
+# Initialize original_threads from MODEL_CONFIG
+THERMAL_CONFIG["original_threads"] = MODEL_CONFIG.get("n_threads", 4)
+
 CODE_DIR = Path(__file__).parent.parent.resolve()
 WORKSPACE_ROOT = Path(os.getcwd()).resolve()
 

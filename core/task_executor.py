@@ -15,6 +15,8 @@ from utils.logger import info, warning, error, success, debug
 from utils.config import AGENT_CONFIG
 from core.state import StateStore
 from core.daemon_config import DaemonConfig
+from core.recovery import get_switcher, ErrorType
+from core.thermal import start_inference, end_inference
 
 # Import agent components for task execution
 # We'll use a simplified execution path that doesn't require full REPL
@@ -111,17 +113,22 @@ class TaskExecutor:
     async def _execute_task(self, prompt: str) -> str:
         """
         Execute a single task using the agent inference engine.
-        
+
         This is a simplified execution that:
         1. Builds context from project files
         2. Runs inference with the agent prompt
         3. Executes any tool calls in the response
         4. Returns the final result
+        
+        Includes thermal management and error recovery.
         """
+        # Start thermal tracking
+        start_inference()
+        
         try:
             # Build system prompt
             system_prompt = SYSTEM_PROMPT
-            
+
             # Add project context if available
             from core.project import detect_project
             project_info = detect_project()
@@ -160,14 +167,18 @@ class TaskExecutor:
             # Run inference (this may include tool calls)
             # For daemon mode, we run with auto-execute for simple tasks
             result = await self._run_with_tool_execution(messages)
-            
+
             return result
-            
+
         except Exception as e:
             import traceback
             error(f"Task execution error: {e}")
             error(traceback.format_exc())
             raise RuntimeError(f"Execution failed: {e}")
+        
+        finally:
+            # End thermal tracking
+            end_inference()
     
     async def _run_with_tool_execution(self, messages: List[Dict], max_steps: int = 6) -> str:
         """
@@ -235,8 +246,23 @@ class TaskExecutor:
                     debug(f"Step {step}: Tool executed successfully")
                 except Exception as e:
                     error(f"Tool {tool_name} error: {e}")
+                    
+                    # Try recovery strategy
+                    switcher = get_switcher()
+                    fallback = switcher.get_fallback(error_message=str(e))
+                    
+                    if fallback:
+                        info(f"Recovery: Trying {fallback.name} - {fallback.description}")
+                        # Record the error for learning
+                        switcher.record_error(
+                            switcher.classify_error(str(e)),
+                            str(e),
+                            fallback.name,
+                            success=False  # Will be updated if retry succeeds
+                        )
+                    
                     messages.append({"role": "assistant", "content": response})
-                    messages.append({"role": "user", "content": f"Tool error: {e}"})
+                    messages.append({"role": "user", "content": f"Tool error: {e}. Recovery suggestion: {fallback.name if fallback else 'manual review'}"})
             else:
                 messages.append({"role": "assistant", "content": response})
                 messages.append({"role": "user", "content": f"Unknown tool: {tool_name}"})
