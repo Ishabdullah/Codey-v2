@@ -99,12 +99,17 @@ install_dependencies() {
 install_python_deps() {
     print_status "Installing Python dependencies..."
     
-    # Upgrade pip
-    pip install --upgrade pip
+    if [ -d "/data/data/com.termux" ]; then
+        # Termux - pip is already available with python package
+        print_status "Termux detected, using system pip..."
+    else
+        # Generic Linux - upgrade pip
+        pip3 install --upgrade pip
+    fi
     
     # Install requirements
     cd "$CODEY_V2_DIR"
-    pip install -r requirements.txt
+    pip3 install -r requirements.txt
     
     print_success "Python dependencies installed"
 }
@@ -161,36 +166,92 @@ download_models() {
     mkdir -p "$PRIMARY_MODEL_DIR"
     mkdir -p "$SECONDARY_MODEL_DIR"
     
-    # Download primary model (7B)
+    # Track if any models need downloading
+    MODELS_NEED_DOWNLOAD=false
+
+    # Check primary model (7B)
     PRIMARY_MODEL_PATH="$PRIMARY_MODEL_DIR/$PRIMARY_MODEL_FILE"
     if [ -f "$PRIMARY_MODEL_PATH" ]; then
-        print_status "Primary model (7B) already exists, skipping..."
-    else
-        print_warning "Primary model (7B) is ~4.7GB - this will take a while"
-        print_warning "Press Ctrl+C to skip model download and download later"
+        # Check if file is complete (not partial download)
+        FILE_SIZE=$(stat -c%s "$PRIMARY_MODEL_PATH" 2>/dev/null || stat -f%z "$PRIMARY_MODEL_PATH" 2>/dev/null || echo 0)
+        MIN_SIZE=4000000000  # 4GB minimum for valid model
         
+        if [ "$FILE_SIZE" -gt "$MIN_SIZE" ]; then
+            print_success "Primary model (7B) already exists ($(numfmt --to=iec-i --suffix=B $FILE_SIZE 2>/dev/null || echo "${FILE_SIZE}B")), skipping..."
+        else
+            print_warning "Primary model (7B) exists but appears incomplete, re-downloading..."
+            rm -f "$PRIMARY_MODEL_PATH"
+            MODELS_NEED_DOWNLOAD=true
+        fi
+    else
+        print_status "Primary model (7B) not found"
+        MODELS_NEED_DOWNLOAD=true
+    fi
+
+    # Check secondary model (1.5B)
+    SECONDARY_MODEL_PATH="$SECONDARY_MODEL_DIR/$SECONDARY_MODEL_FILE"
+    if [ -f "$SECONDARY_MODEL_PATH" ]; then
+        # Check if file is complete (not partial download)
+        FILE_SIZE=$(stat -c%s "$SECONDARY_MODEL_PATH" 2>/dev/null || stat -f%z "$SECONDARY_MODEL_PATH" 2>/dev/null || echo 0)
+        MIN_SIZE=1000000000  # 1GB minimum for valid model
+        
+        if [ "$FILE_SIZE" -gt "$MIN_SIZE" ]; then
+            print_success "Secondary model (1.5B) already exists ($(numfmt --to=iec-i --suffix=B $FILE_SIZE 2>/dev/null || echo "${FILE_SIZE}B")), skipping..."
+        else
+            print_warning "Secondary model (1.5B) exists but appears incomplete, re-downloading..."
+            rm -f "$SECONDARY_MODEL_PATH"
+            MODELS_NEED_DOWNLOAD=true
+        fi
+    else
+        print_status "Secondary model (1.5B) not found"
+        MODELS_NEED_DOWNLOAD=true
+    fi
+    
+    # If no models need downloading, skip entirely
+    if [ "$MODELS_NEED_DOWNLOAD" = false ]; then
+        print_success "All models already downloaded, skipping model download step"
+        return 0
+    fi
+    
+    echo
+    print_warning "Models will be downloaded now (~7GB total)"
+    print_warning "This may take 10-30 minutes depending on your connection"
+    print_warning "Press Ctrl+C to skip and download models manually later"
+    echo
+    
+    # Download primary model (7B)
+    if [ ! -f "$PRIMARY_MODEL_PATH" ]; then
+        print_status "Downloading Primary model (7B) - ~4.7GB..."
         if download_file "$PRIMARY_MODEL_URL" "$PRIMARY_MODEL_PATH" "Primary model (7B)"; then
-            print_success "Primary model (7B) downloaded"
+            # Verify download
+            FILE_SIZE=$(stat -c%s "$PRIMARY_MODEL_PATH" 2>/dev/null || stat -f%z "$PRIMARY_MODEL_PATH" 2>/dev/null || echo 0)
+            if [ "$FILE_SIZE" -gt 4000000000 ]; then
+                print_success "Primary model (7B) downloaded successfully"
+            else
+                print_error "Primary model download appears incomplete"
+                print_warning "You can resume download later: wget -c -P $PRIMARY_MODEL_DIR $PRIMARY_MODEL_URL"
+            fi
         else
             print_error "Failed to download primary model"
-            print_warning "You can download it manually later:"
-            print_warning "  wget -P $PRIMARY_MODEL_DIR $PRIMARY_MODEL_URL"
+            print_warning "Manual download: wget -c -P $PRIMARY_MODEL_DIR $PRIMARY_MODEL_URL"
         fi
     fi
     
     # Download secondary model (1.5B)
-    SECONDARY_MODEL_PATH="$SECONDARY_MODEL_DIR/$SECONDARY_MODEL_FILE"
-    if [ -f "$SECONDARY_MODEL_PATH" ]; then
-        print_status "Secondary model (1.5B) already exists, skipping..."
-    else
-        print_warning "Secondary model (1.5B) is ~2GB"
-        
+    if [ ! -f "$SECONDARY_MODEL_PATH" ]; then
+        print_status "Downloading Secondary model (1.5B) - ~2GB..."
         if download_file "$SECONDARY_MODEL_URL" "$SECONDARY_MODEL_PATH" "Secondary model (1.5B)"; then
-            print_success "Secondary model (1.5B) downloaded"
+            # Verify download
+            FILE_SIZE=$(stat -c%s "$SECONDARY_MODEL_PATH" 2>/dev/null || stat -f%z "$SECONDARY_MODEL_PATH" 2>/dev/null || echo 0)
+            if [ "$FILE_SIZE" -gt 1000000000 ]; then
+                print_success "Secondary model (1.5B) downloaded successfully"
+            else
+                print_error "Secondary model download appears incomplete"
+                print_warning "You can resume download later: wget -c -P $SECONDARY_MODEL_DIR $SECONDARY_MODEL_URL"
+            fi
         else
             print_error "Failed to download secondary model"
-            print_warning "You can download it manually later:"
-            print_warning "  wget -P $SECONDARY_MODEL_DIR $SECONDARY_MODEL_URL"
+            print_warning "Manual download: wget -c -P $SECONDARY_MODEL_DIR $SECONDARY_MODEL_URL"
         fi
     fi
 }
