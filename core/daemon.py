@@ -1,0 +1,522 @@
+#!/usr/bin/env python3
+"""
+Daemon core for Codey v2.
+
+Main daemon process with:
+- Unix socket server for CLI communication
+- Signal handlers (SIGTERM for graceful shutdown, SIGUSR1 for reload)
+- PID file management for single-instance enforcement
+- Main event loop for background tasks
+
+The daemon runs continuously in the background, accepting commands
+from the CLI client via a Unix domain socket.
+"""
+
+import os
+import sys
+import json
+import socket
+import signal
+import asyncio
+import time
+from pathlib import Path
+from typing import Optional, Callable, Dict, Any
+
+from utils.config import CODEY_DIR
+from utils.logger import info, warning, error, success, set_log_level, setup_file_logging
+from core.state import get_state_store, StateStore
+from core.daemon_config import get_config, DaemonConfig
+from core.task_executor import TaskExecutor
+
+# ==================== Configuration ====================
+
+# Load daemon configuration
+daemon_config = get_config()
+
+# Apply log configuration
+log_level = daemon_config.get("daemon", "log_level", default="INFO")
+set_log_level(log_level)
+
+log_file = daemon_config.get("daemon", "log_file", default=str(Path.home() / ".codey-v2/codey.log"))
+setup_file_logging(log_file)
+
+# Daemon directory in user's home (Codey v2 specific)
+DAEMON_DIR = Path.home() / ".codey-v2"
+
+# Paths from config (with defaults)
+PID_FILE = Path(daemon_config.get("daemon", "pid_file", default=str(DAEMON_DIR / "codey.pid")))
+SOCKET_FILE = Path(daemon_config.get("daemon", "socket_file", default=str(DAEMON_DIR / "codey.sock")))
+LOG_FILE = Path(daemon_config.get("daemon", "log_file", default=str(DAEMON_DIR / "codey.log")))
+
+# Ensure daemon directory exists
+DAEMON_DIR.mkdir(parents=True, exist_ok=True)
+
+
+# ==================== PID File Management ====================
+
+def check_pid_file() -> bool:
+    """
+    Check if daemon is already running.
+    
+    Returns True if another daemon is running.
+    Removes stale PID file if process is dead.
+    """
+    if PID_FILE.exists():
+        try:
+            pid = int(PID_FILE.read_text().strip())
+            os.kill(pid, 0)  # Check if process exists
+            return True  # Daemon is running
+        except (ProcessLookupError, ValueError):
+            # Process is dead, remove stale PID file
+            warning("Removing stale PID file")
+            PID_FILE.unlink(missing_ok=True)
+            return False
+    return False
+
+
+def write_pid_file():
+    """Write current PID to PID file."""
+    PID_FILE.write_text(str(os.getpid()))
+
+
+def remove_pid_file():
+    """Remove PID file on shutdown."""
+    PID_FILE.unlink(missing_ok=True)
+
+
+# ==================== Unix Socket Server ====================
+
+class DaemonServer:
+    """
+    Unix socket server for CLI communication.
+    
+    Handles incoming commands from CLI clients and routes them
+    to appropriate handlers.
+    """
+    
+    def __init__(self, state: StateStore):
+        self.state = state
+        self.server: Optional[asyncio.Server] = None
+        self.running = False
+        self._handlers: Dict[str, Callable] = {}
+        self._register_default_handlers()
+    
+    def _register_default_handlers(self):
+        """Register default command handlers."""
+        self.register_handler("ping", self._handle_ping)
+        self.register_handler("command", self._handle_command)
+        self.register_handler("status", self._handle_status)
+        self.register_handler("health", self._handle_health)
+        self.register_handler("task", self._handle_task)
+        self.register_handler("cancel", self._handle_cancel)
+        self.register_handler("shutdown", self._handle_shutdown)
+    
+    def register_handler(self, cmd: str, handler: Callable):
+        """Register a command handler."""
+        self._handlers[cmd] = handler
+    
+    async def _handle_ping(self, data: Dict) -> Dict:
+        """Handle ping command."""
+        return {"status": "ok", "message": "pong"}
+    
+    async def _handle_command(self, data: Dict) -> Dict:
+        """Handle a user command (prompt)."""
+        prompt = data.get("prompt", "")
+        if not prompt:
+            return {"status": "error", "message": "No prompt provided"}
+        
+        # Log to episodic log
+        self.state.log_action("command_received", prompt[:200])
+        
+        # Add to task queue
+        task_id = self.state.add_task(prompt)
+        
+        # For now, just acknowledge (actual execution would happen in background)
+        return {
+            "status": "ok",
+            "message": f"Task queued with ID {task_id}",
+            "task_id": task_id
+        }
+    
+    async def _handle_status(self, data: Dict) -> Dict:
+        """Handle status query."""
+        pending = len(self.state.get_tasks_by_status("pending"))
+        running = len(self.state.get_tasks_by_status("running"))
+        done = len(self.state.get_tasks_by_status("done"))
+
+        return {
+            "status": "ok",
+            "daemon": "running",
+            "pid": os.getpid(),
+            "tasks": {
+                "pending": pending,
+                "running": running,
+                "done": done
+            },
+            "state": self.state.get_all()
+        }
+
+    async def _handle_health(self, data: Dict) -> Dict:
+        """Handle health check query."""
+        import resource
+        
+        # Get process memory usage
+        try:
+            usage = resource.getrusage(resource.RUSAGE_SELF)
+            memory_mb = usage.ru_maxrss / 1024  # Convert to MB (on Linux)
+        except:
+            memory_mb = 0
+        
+        # Get task stats
+        all_tasks = self.state.get_all_tasks()
+        pending_count = len([t for t in all_tasks if t["status"] == "pending"])
+        stuck_tasks = []
+        now = int(time.time())
+        for t in all_tasks:
+            if t["status"] == "running" and t.get("started_at"):
+                running_time = now - t["started_at"]
+                if running_time > 1800:  # 30 minutes
+                    stuck_tasks.append(t["id"])
+        
+        # Get recent actions count
+        recent_actions = len(self.state.get_recent_actions(100))
+        
+        # Get uptime
+        started_at = self.state.get("daemon_started_at", 0)
+        uptime_seconds = int(time.time()) - int(started_at) if started_at else 0
+        
+        return {
+            "status": "ok",
+            "healthy": True,
+            "pid": os.getpid(),
+            "uptime_seconds": uptime_seconds,
+            "memory_mb": round(memory_mb, 1),
+            "tasks": {
+                "pending": pending_count,
+                "stuck": stuck_tasks
+            },
+            "recent_actions": recent_actions
+        }
+
+    async def _handle_task(self, data: Dict) -> Dict:
+        """Handle task query (get task by ID or list all)."""
+        task_id = data.get("id")
+        
+        if task_id is not None:
+            # Get specific task
+            task = self.state.get_task(task_id)
+            if not task:
+                return {"status": "error", "message": f"Task {task_id} not found"}
+            return {"status": "ok", "task": task}
+        else:
+            # List all tasks
+            limit = data.get("limit", 20)
+            tasks = self.state.get_all_tasks()[:limit]
+            return {"status": "ok", "tasks": tasks}
+
+    async def _handle_cancel(self, data: Dict) -> Dict:
+        """Handle task cancellation."""
+        task_id = data.get("id")
+        if not task_id:
+            return {"status": "error", "message": "Task ID required"}
+        
+        cancelled = self.state.cancel_task(task_id)
+        if cancelled:
+            self.state.log_action("task_cancelled", f"Task {task_id}")
+            return {"status": "ok", "message": f"Task {task_id} cancelled"}
+        else:
+            task = self.state.get_task(task_id)
+            if task:
+                return {"status": "error", "message": f"Task {task_id} already {task['status']}"}
+            return {"status": "error", "message": f"Task {task_id} not found"}
+
+    async def _handle_shutdown(self, data: Dict) -> Dict:
+        """Handle shutdown request."""
+        info("Shutdown requested via socket")
+        self.running = False
+        return {"status": "ok", "message": "Shutting down"}
+    
+    async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
+        """Handle incoming client connection."""
+        try:
+            # Read request (JSON message)
+            data = await reader.read(65536)
+            if not data:
+                return
+            
+            request = json.loads(data.decode('utf-8'))
+            cmd = request.get("cmd", "unknown")
+            
+            info(f"Received command: {cmd}")
+            
+            # Route to handler
+            handler = self._handlers.get(cmd)
+            if handler:
+                response = await handler(request.get("data", {}))
+            else:
+                response = {"status": "error", "message": f"Unknown command: {cmd}"}
+            
+            # Send response
+            writer.write(json.dumps(response).encode('utf-8'))
+            await writer.drain()
+            
+        except json.JSONDecodeError as e:
+            error(f"Invalid JSON from client: {e}")
+            writer.write(json.dumps({"status": "error", "message": "Invalid JSON"}).encode('utf-8'))
+            await writer.drain()
+        except Exception as e:
+            error(f"Error handling client: {e}")
+            try:
+                writer.write(json.dumps({"status": "error", "message": str(e)}).encode('utf-8'))
+                await writer.drain()
+            except:
+                pass
+        finally:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except:
+                pass
+    
+    async def start(self):
+        """Start the socket server."""
+        # Remove old socket file if exists
+        SOCKET_FILE.unlink(missing_ok=True)
+        
+        self.server = await asyncio.start_unix_server(
+            self._handle_client,
+            path=str(SOCKET_FILE)
+        )
+        
+        # Set socket permissions (user only)
+        os.chmod(SOCKET_FILE, 0o600)
+        
+        self.running = True
+        info(f"Daemon listening on {SOCKET_FILE}")
+        
+        async with self.server:
+            await self.server.serve_forever()
+    
+    async def stop(self):
+        """Stop the socket server."""
+        self.running = False
+        if self.server:
+            self.server.close()
+            await self.server.wait_closed()
+        SOCKET_FILE.unlink(missing_ok=True)
+        info("Daemon socket stopped")
+
+
+# ==================== Daemon Core ====================
+
+class Daemon:
+    """
+    Main daemon class.
+
+    Manages the event loop, signal handlers, and socket server.
+    """
+
+    def __init__(self):
+        self.state = get_state_store()
+        self.server = DaemonServer(self.state)
+        self.executor = TaskExecutor(self.state, daemon_config)
+        from core.planner_v2 import get_planner
+        self.planner = get_planner()
+        from core.background import get_background_manager, get_file_watch_manager
+        self.background = get_background_manager()
+        self.file_watch = get_file_watch_manager()
+        self.running = True
+        self._reload_requested = False
+        
+        # Register signal handlers
+        signal.signal(signal.SIGTERM, self._handle_sigterm)
+        signal.signal(signal.SIGUSR1, self._handle_sigusr1)
+    
+    def _handle_sigterm(self, signum, frame):
+        """Handle SIGTERM (graceful shutdown)."""
+        info("SIGTERM received, shutting down...")
+        self.running = False
+    
+    def _handle_sigusr1(self, signum, frame):
+        """Handle SIGUSR1 (reload configuration)."""
+        info("SIGUSR1 received, reload requested")
+        self._reload_requested = True
+    
+    async def _main_loop(self):
+        """Main daemon event loop."""
+        info("Daemon started")
+        self.state.set("daemon_started_at", int(time.time()))
+        self.state.log_action("daemon_started", f"PID {os.getpid()}")
+
+        # Start socket server
+        server_task = asyncio.create_task(self.server.start())
+
+        # Start task executor
+        executor_task = asyncio.create_task(self.executor.start())
+
+        # Start file watch manager
+        self.file_watch.start()
+
+        try:
+            while self.running:
+                # Check for reload request
+                if self._reload_requested:
+                    info("Processing reload...")
+                    self._reload_requested = False
+                    # In future: reload config, models, etc.
+
+                # Process planner tasks
+                await self._process_planner_tasks()
+
+                # Cleanup completed background tasks periodically
+                self.background.cleanup_completed(max_age=3600)
+
+                # Small sleep to avoid busy loop
+                await asyncio.sleep(0.5)
+
+        finally:
+            # Stop file watch
+            self.file_watch.stop()
+
+            # Stop executor
+            self.executor.stop()
+            executor_task.cancel()
+            try:
+                await executor_task
+            except asyncio.CancelledError:
+                pass
+
+            # Cleanup
+            await self.server.stop()
+            remove_pid_file()
+            self.state.set("daemon_stopped_at", int(time.time()))
+            self.state.log_action("daemon_stopped", f"PID {os.getpid()}")
+            info("Daemon stopped")
+
+    async def _process_planner_tasks(self):
+        """Process pending tasks from the planner."""
+        # Get next ready task from planner
+        task = self.planner.get_next_task()
+        if task:
+            info(f"Planner: executing task {task.id}: {task.description[:50]}...")
+            
+            # Start the task
+            self.planner.start_task(task.id)
+            
+            # Execute using task executor
+            # For now, just mark as complete (full integration in Phase 5)
+            await asyncio.sleep(0.1)
+            self.planner.complete_task(task.id, "Task completed via planner")
+            success(f"Planner: task {task.id} completed")
+
+    def run(self):
+        """Run the daemon."""
+        write_pid_file()
+        info(f"Daemon PID: {os.getpid()}")
+
+        try:
+            asyncio.run(self._main_loop())
+        except KeyboardInterrupt:
+            info("Interrupted")
+        finally:
+            remove_pid_file()
+
+
+# ==================== CLI Functions ====================
+
+def is_daemon_running() -> bool:
+    """Check if daemon is running by testing socket."""
+    if not SOCKET_FILE.exists():
+        return False
+    
+    try:
+        sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        sock.settimeout(1.0)
+        sock.connect(str(SOCKET_FILE))
+        sock.close()
+        return True
+    except (socket.error, OSError):
+        return False
+
+
+def send_command(cmd: str, data: Dict = None) -> Dict:
+    """Send a command to the daemon via socket."""
+    if not SOCKET_FILE.exists():
+        raise ConnectionError("Daemon socket not found. Is the daemon running?")
+
+    sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+    sock.settimeout(30.0)
+
+    try:
+        sock.connect(str(SOCKET_FILE))
+
+        # Send request
+        request = {"cmd": cmd, "data": data or {}}
+        sock.sendall(json.dumps(request).encode('utf-8'))
+
+        # Receive response
+        response_data = b""
+        while True:
+            chunk = sock.recv(65536)
+            if not chunk:
+                break
+            response_data += chunk
+        
+        if not response_data:
+            raise ConnectionError("No response from daemon. Connection closed.")
+
+        response = json.loads(response_data.decode('utf-8'))
+        
+        # Check for error response
+        if response.get("status") == "error":
+            raise RuntimeError(response.get("message", "Unknown error"))
+        
+        return response
+
+    except socket.timeout:
+        raise ConnectionError("Connection timed out. Daemon may be busy.")
+    except socket.error as e:
+        raise ConnectionError(f"Socket error: {e}. Is the daemon running?")
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"Invalid response from daemon: {e}")
+    finally:
+        try:
+            sock.close()
+        except:
+            pass
+
+
+def daemon_status() -> Dict:
+    """Get daemon status."""
+    return send_command("status")
+
+
+def daemon_health() -> Dict:
+    """Get daemon health check."""
+    return send_command("health")
+
+
+def daemon_ping() -> Dict:
+    """Ping the daemon."""
+    return send_command("ping")
+
+
+def daemon_shutdown():
+    """Request daemon shutdown."""
+    return send_command("shutdown")
+
+
+# ==================== Entry Point ====================
+
+def main():
+    """Main entry point for daemon."""
+    if check_pid_file():
+        error("Daemon is already running")
+        sys.exit(1)
+    
+    daemon = Daemon()
+    daemon.run()
+
+
+if __name__ == "__main__":
+    main()

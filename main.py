@@ -38,6 +38,7 @@ def parse_args():
     parser.add_argument("--clear-session", action="store_true", help="Clear saved session")
     parser.add_argument("--plan", action="store_true", help="Enable plan mode for complex tasks")
     parser.add_argument("--no-plan", action="store_true", help="Disable orchestration/planning for complex tasks")
+    parser.add_argument("--daemon",     action="store_true", help="Run in daemon mode (v2 feature)")
     return parser.parse_args()
 
 def apply_overrides(args):
@@ -453,6 +454,14 @@ def main():
         sys.exit(0)
 
     apply_overrides(args)
+
+    # Daemon mode (v2 feature)
+    if args.daemon:
+        info("Starting Codey v2 daemon mode...")
+        from core.daemon import Daemon
+        daemon = Daemon()
+        daemon.run()
+        return
 
     if args.clear_session:
         from core.sessions import clear_session

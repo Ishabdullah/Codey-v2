@@ -1,6 +1,8 @@
 import sys
+import logging
 from rich.console import Console
 from rich.theme import Theme
+from typing import Optional
 
 _theme = Theme({
     "info":    "bold cyan",
@@ -14,11 +16,80 @@ _theme = Theme({
 
 console = Console(theme=_theme, highlight=False)
 
-def info(msg):    console.print(f"[info]ℹ  {msg}[/info]")
-def success(msg): console.print(f"[success]✓  {msg}[/success]")
-def warning(msg): console.print(f"[warning]⚠  {msg}[/warning]")
-def error(msg):   console.print(f"[error]✗  {msg}[/error]")
-def think(msg):   console.print(f"[think]💭 {msg}[/think]")
+# Log level mapping
+LOG_LEVELS = {
+    "DEBUG": logging.DEBUG,
+    "INFO": logging.INFO,
+    "WARNING": logging.WARNING,
+    "ERROR": logging.ERROR,
+}
+
+# Current log level (can be set from config)
+_current_log_level: int = logging.INFO
+
+# File handler for daemon logging
+_file_handler: Optional[logging.FileHandler] = None
+_file_logger: Optional[logging.Logger] = None
+
+
+def set_log_level(level: str):
+    """Set the current log level."""
+    global _current_log_level
+    _current_log_level = LOG_LEVELS.get(level.upper(), logging.INFO)
+
+
+def setup_file_logging(log_file: str):
+    """Set up file logging for daemon mode."""
+    global _file_handler, _file_logger
+    
+    _file_logger = logging.getLogger("codey_daemon")
+    _file_logger.setLevel(logging.DEBUG)
+    
+    _file_handler = logging.FileHandler(log_file, mode='a')
+    _file_handler.setLevel(logging.DEBUG)
+    formatter = logging.Formatter('%(asctime)s - %(levelname)s - %(message)s')
+    _file_handler.setFormatter(formatter)
+    
+    _file_logger.addHandler(_file_handler)
+
+
+def _log_to_file(level: str, message: str):
+    """Log a message to the file handler."""
+    if _file_logger:
+        log_method = getattr(_file_logger, level.lower(), _file_logger.info)
+        log_method(message)
+
+
+def info(msg):
+    if _current_log_level <= logging.INFO:
+        console.print(f"[info]ℹ  {msg}[/info]")
+    _log_to_file("info", msg)
+
+def success(msg):
+    if _current_log_level <= logging.INFO:
+        console.print(f"[success]✓  {msg}[/success]")
+    _log_to_file("info", msg)
+
+def warning(msg):
+    if _current_log_level <= logging.WARNING:
+        console.print(f"[warning]⚠  {msg}[/warning]")
+    _log_to_file("warning", msg)
+
+def error(msg):
+    if _current_log_level <= logging.ERROR:
+        console.print(f"[error]✗  {msg}[/error]")
+    _log_to_file("error", msg)
+
+def think(msg):
+    if _current_log_level <= logging.DEBUG:
+        console.print(f"[think]💭 {msg}[/think]")
+    _log_to_file("debug", msg)
+
+def debug(msg):
+    """Debug level logging."""
+    if _current_log_level <= logging.DEBUG:
+        console.print(f"[dim]🔍 {msg}[/dim]")
+    _log_to_file("debug", msg)
 
 def tool_call(name, args):
     console.print(f"[tool]🔧 TOOL [{name}][/tool]")

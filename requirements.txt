@@ -1,2 +1,12 @@
 rich==14.3.3
 pytest==9.0.2
+
+# Phase 4: Hierarchical Memory
+sentence-transformers>=2.2.0
+numpy>=1.24.0
+
+# Phase 5: Background Execution
+watchdog>=3.0.0
+
+# Phase 6: Observability
+psutil>=5.9.0

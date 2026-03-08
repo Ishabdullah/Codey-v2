@@ -8,6 +8,20 @@ MODEL_PATH = Path(os.environ.get(
     Path.home() / "models" / "qwen2.5-coder-7b" / "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
 ))
 
+# Secondary model (1.5B for simple tasks) - Phase 3
+SECONDARY_MODEL_PATH = Path(os.environ.get(
+    "CODEY_SECONDARY_MODEL",
+    Path.home() / "models" / "qwen2.5-1.5b" / "Qwen2.5-1.5B-Instruct-Q8_0.gguf"
+))
+
+# Router configuration - Phase 3
+ROUTER_CONFIG = {
+    "simple_max_chars": 50,         # Under this length → consider simple
+    "simple_keywords": ["hello", "hi", "hey", "thanks", "thank you", "bye", "goodbye"],
+    "swap_cooldown_sec": 30,        # Cooldown before swapping back to primary
+    "swap_delay_sec": 3,            # Expected delay for model swap
+}
+
 # Detection of llama-server binary and library path
 _HOME_LLAMA = Path.home() / "llama.cpp" / "build" / "bin"
 LLAMA_SERVER_BIN = os.environ.get("CODEY_LLAMA_SERVER") or shutil.which("llama-server") or str(_HOME_LLAMA / "llama-server")

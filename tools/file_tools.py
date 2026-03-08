@@ -1,81 +1,131 @@
+#!/usr/bin/env python3
 """
-File tools with confirmation + automatic history snapshots before writes.
-"""
-from pathlib import Path
-from utils.file_utils import read_file, write_file, append_file, list_dir
-from utils.logger import confirm as ask_confirm, warning, success
-from utils.config import AGENT_CONFIG, WORKSPACE_ROOT, CODE_DIR
-from core.filehistory import snapshot
+File tools for Codey v2.
 
-def is_outside_workspace(path: str) -> bool:
-    p = Path(path).expanduser().resolve()
-    try:
-        p.relative_to(WORKSPACE_ROOT)
-        return False
-    except ValueError:
-        # If not relative to workspace, it's outside
-        # Check if it's relative to CODE_DIR (protected anyway)
-        try:
-            p.relative_to(CODE_DIR)
-            return False
-        except ValueError:
-            return True
+Refactored for v2: Uses core/filesystem.Filesystem class for direct access.
+Confirmation logic moved to agent layer. No more PROTECTED_FILES block.
+Snapshots handled by Filesystem class.
+"""
+
+from pathlib import Path
+from typing import List, Union
+from core.filesystem import Filesystem, get_filesystem, FilesystemAccessError
+
+# Global filesystem instance
+_fs: Filesystem = None
+
+
+def _get_fs() -> Filesystem:
+    """Get or create filesystem instance."""
+    global _fs
+    if _fs is None:
+        _fs = get_filesystem()
+    return _fs
+
 
 def tool_read_file(path: str) -> str:
-    if is_outside_workspace(path):
-        warning(f"Accessing file outside workspace: {path}")
-        if not ask_confirm("Confirm read?"):
-            return "[CANCELLED] Read outside workspace denied by user."
-    return read_file(path)
-
-PROTECTED_FILES = {
-    "main.py", "agent.py", "inference.py", "loader.py", "config.py",
-    "system_prompt.py", "file_tools.py", "patch_tools.py", "shell_tools.py",
-    "logger.py", "orchestrator.py", "taskqueue.py", "display.py",
-    "memory.py", "context.py", "sessions.py", "tdd.py", "planner.py",
-}
-
-def _is_protected(path):
-    p = Path(path).expanduser().resolve()
-    fname = p.name
+    """
+    Read file content.
+    
+    Args:
+        path: Path to file
+        
+    Returns:
+        File content or error message
+    """
     try:
-        p.relative_to(CODE_DIR)
-        return fname in PROTECTED_FILES
-    except ValueError:
-        return False
+        return _get_fs().read(path)
+    except FilesystemAccessError as e:
+        return f"[ERROR] {e}"
+
 
 def tool_write_file(path: str, content: str) -> str:
-    # Fix escaped quotes from model JSON confusion
-    if content and '\\"' in content:
-        content = content.replace('\\"', '"').replace("\\'", "'")
+    """
+    Write file content.
     
-    if _is_protected(path):
-        return f"[BLOCKED] {path} is a protected Codey source file."
+    Args:
+        path: Path to file
+        content: Content to write
         
-    if is_outside_workspace(path):
-        warning(f"Writing file outside workspace: {path}")
-        if not ask_confirm("Confirm write outside workspace?"):
-            return "[CANCELLED] Write outside workspace denied by user."
+    Returns:
+        Success message or error message
+    """
+    try:
+        return _get_fs().write(path, content)
+    except FilesystemAccessError as e:
+        return f"[ERROR] {e}"
 
-    # Snapshot before overwriting
-    snapshot(path)
 
-    if AGENT_CONFIG["confirm_write"]:
-        preview = content[:200] + ("..." if len(content) > 200 else "")
-        warning(f"About to write to: {path}")
-        print(f"Preview:\n{preview}")
-        if not ask_confirm("Confirm write?"):
-            return "[CANCELLED] Write cancelled by user."
-    return write_file(path, content)
+def tool_patch_file(path: str, old_str: str, new_str: str) -> str:
+    """
+    Patch file content (replace old_str with new_str).
+    
+    Args:
+        path: Path to file
+        old_str: String to find and replace
+        new_str: Replacement string
+        
+    Returns:
+        Diff of changes or error message
+    """
+    try:
+        return _get_fs().patch(path, old_str, new_str)
+    except FilesystemAccessError as e:
+        return f"[ERROR] {e}"
+
 
 def tool_append_file(path: str, content: str) -> str:
-    # Snapshot before appending
-    snapshot(path)
+    """
+    Append content to file.
+    
+    Args:
+        path: Path to file
+        content: Content to append
+        
+    Returns:
+        Success message or error message
+    """
+    try:
+        return _get_fs().append(path, content)
+    except FilesystemAccessError as e:
+        return f"[ERROR] {e}"
 
-    if AGENT_CONFIG["confirm_write"]:
-        if not ask_confirm(f"Append to {path}?"):
-            return "[CANCELLED] Append cancelled by user."
-    return append_file(path, content)
 
 def tool_list_dir(path: str = ".") -> str:
-    return list_dir(path)
+    """
+    List directory contents.
+    
+    Args:
+        path: Directory path (default: current directory)
+        
+    Returns:
+        Formatted list of entries or error message
+    """
+    try:
+        entries = _get_fs().list_dir(path)
+        # Format as multi-line string
+        lines = []
+        for entry in entries:
+            full_path = Path(path) / entry
+            if full_path.is_dir():
+                lines.append(f"📁 {entry}/")
+            else:
+                lines.append(f"📄 {entry}")
+        return "\n".join(lines)
+    except FilesystemAccessError as e:
+        return f"[ERROR] {e}"
+
+
+def file_exists(path: str) -> bool:
+    """Check if file exists."""
+    return _get_fs().exists(path)
+
+
+def file_is_file(path: str) -> bool:
+    """Check if path is a file."""
+    return _get_fs().is_file(path)
+
+
+def file_is_dir(path: str) -> bool:
+    """Check if path is a directory."""
+    return _get_fs().is_dir(path)
