@@ -1,237 +1,346 @@
-#!/data/data/com.termux/files/usr/bin/bash
-# ============================================================
-#  Codey Installer — Full setup on a fresh Termux install
-#  Usage: bash install.sh
-# ============================================================
+#!/usr/bin/env bash
+#
+# Codey v2 Installation Script
+#
+# This script installs everything needed for Codey v2:
+# - Python dependencies
+# - llama.cpp binary
+# - Both models (7B primary + 1.5B secondary)
+# - PATH configuration
+#
+# After installation, just type 'codey2' anywhere to start.
+#
 
 set -e
 
+# Colors for output
 RED='\033[0;31m'
 GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
-CYAN='\033[0;36m'
-BOLD='\033[1m'
-NC='\033[0m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
 
-info()    { echo -e "${CYAN}ℹ  $1${NC}"; }
-success() { echo -e "${GREEN}✓  $1${NC}"; }
-warning() { echo -e "${YELLOW}⚠  $1${NC}"; }
-error()   { echo -e "${RED}✗  $1${NC}"; exit 1; }
-header()  { echo -e "\n${BOLD}${CYAN}── $1 ──${NC}\n"; }
+# Configuration
+CODEY_V2_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+LLAMA_CPP_DIR="$HOME/llama.cpp"
+MODELS_DIR="$HOME/models"
+PRIMARY_MODEL_DIR="$MODELS_DIR/qwen2.5-coder-7b"
+SECONDARY_MODEL_DIR="$MODELS_DIR/qwen2.5-1.5b"
+PRIMARY_MODEL_FILE="Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
+SECONDARY_MODEL_FILE="Qwen2.5-1.5B-Instruct-Q8_0.gguf"
 
-# ── Paths ────────────────────────────────────────────────────
-HOME_DIR="$HOME"
-CODEY_DIR="$HOME_DIR/codey"
-LLAMA_DIR="$HOME_DIR/llama.cpp"
-MODEL_DIR="$HOME_DIR/models/qwen2.5-coder-7b"
-MODEL_FILE="$MODEL_DIR/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
-MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf"
-CODEY_REPO="https://github.com/Ishabdullah/Codey.git"
+# URLs for model downloads (HuggingFace)
+PRIMARY_MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf"
+SECONDARY_MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q8_0.gguf"
 
-echo -e "${BOLD}${GREEN}"
-echo "  ██████╗ ██████╗ ██████╗ ███████╗██╗   ██╗"
-echo " ██╔════╝██╔═══██╗██╔══██╗██╔════╝╚██╗ ██╔╝"
-echo " ██║     ██║   ██║██║  ██║█████╗   ╚████╔╝ "
-echo " ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝  "
-echo " ╚██████╗╚██████╔╝██████╔╝███████╗   ██║   "
-echo "  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝   "
+echo -e "${BLUE}"
+echo "╔═══════════════════════════════════════════════════════════╗"
+echo "║           Codey v2 Installation Script                    ║"
+echo "║   Persistent AI Agent for Termux                          ║"
+echo "╚═══════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
-echo -e "${BOLD}  Codey Installer — Local AI Coding Assistant for Termux${NC}"
-echo ""
-echo "  This will install:"
-echo "  • System packages (python, git, clang, cmake, etc.)"
-echo "  • llama.cpp (compiled from source)"
-echo "  • Qwen2.5-Coder-7B-Instruct Q4_K_M (~4.5 GB)"
-echo "  • Codey and Python dependencies"
-echo ""
-echo "  Requirements:"
-echo "  • ~8 GB free storage"
-echo "  • ~5 GB free RAM at runtime"
-echo "  • Stable internet connection for model download"
-echo ""
-read -p "  Continue? [Y/n]: " confirm
-if [[ "$confirm" =~ ^[Nn]$ ]]; then
-    echo "Aborted."
-    exit 0
-fi
+echo
 
-# ── Step 1: System packages ───────────────────────────────────
-header "Step 1/6: System packages"
-info "Updating package lists..."
-pkg update -y -o Dpkg::Options::="--force-confnew" 2>/dev/null || true
-pkg upgrade -y -o Dpkg::Options::="--force-confnew" 2>/dev/null || true
+# Function to print status
+print_status() {
+    echo -e "${BLUE}[INFO]${NC} $1"
+}
 
-info "Installing required packages..."
-pkg install -y \
-    python \
-    git \
-    clang \
-    cmake \
-    make \
-    ninja \
-    wget \
-    curl \
-    openssh \
-    libandroid-execinfo \
-    2>/dev/null || error "Failed to install system packages"
+print_success() {
+    echo -e "${GREEN}[SUCCESS]${NC} $1"
+}
 
-success "System packages installed."
+print_warning() {
+    echo -e "${YELLOW}[WARNING]${NC} $1"
+}
 
-# ── Step 2: Python dependencies ───────────────────────────────
-header "Step 2/6: Python dependencies"
-pip install --upgrade pip --break-system-packages -q
-pip install rich pytest --break-system-packages -q
-success "Python dependencies installed (rich, pytest)."
+print_error() {
+    echo -e "${RED}[ERROR]${NC} $1"
+}
 
-# ── Step 3: llama.cpp ─────────────────────────────────────────
-header "Step 3/6: Building llama.cpp"
-
-if [ -f "$LLAMA_DIR/build/bin/llama-server" ]; then
-    warning "llama.cpp already built at $LLAMA_DIR — skipping."
-else
-    info "Cloning llama.cpp..."
-    rm -rf "$LLAMA_DIR"
-    git clone --depth=1 https://github.com/ggerganov/llama.cpp.git "$LLAMA_DIR"
-
-    info "Building llama-server (this takes 5-15 minutes)..."
-    cd "$LLAMA_DIR"
-    cmake -B build \
-        -DCMAKE_BUILD_TYPE=Release \
-        -DLLAMA_CURL=OFF \
-        -DGGML_NATIVE=OFF \
-        2>/dev/null
-    cmake --build build --config Release -j$(nproc) --target llama-server 2>/dev/null
-
-    if [ ! -f "$LLAMA_DIR/build/bin/llama-server" ]; then
-        error "llama-server build failed. Check cmake output above."
+# Check if running in Termux
+check_termux() {
+    print_status "Checking environment..."
+    if [ -d "/data/data/com.termux" ]; then
+        print_success "Running in Termux"
+    else
+        print_warning "Not running in Termux. Some commands may need adjustment."
     fi
-    success "llama.cpp built successfully."
-fi
+}
 
-# ── Step 4: Download model ────────────────────────────────────
-header "Step 4/6: Downloading model"
+# Install system dependencies
+install_dependencies() {
+    print_status "Installing system dependencies..."
+    
+    if [ -d "/data/data/com.termux" ]; then
+        # Termux
+        pkg update -y
+        pkg install -y python cmake ninja clang wget curl git
+        print_success "System dependencies installed"
+    else
+        # Generic Linux
+        if command -v apt &> /dev/null; then
+            sudo apt update
+            sudo apt install -y python3 python3-pip cmake ninja-build clang wget curl git
+        elif command -v dnf &> /dev/null; then
+            sudo dnf install -y python3 python3-pip cmake ninja clang wget curl git
+        elif command -v pacman &> /dev/null; then
+            sudo pacman -S --noconfirm python python-pip cmake ninja clang wget curl git
+        else
+            print_warning "Package manager not detected. Please install dependencies manually."
+            print_warning "Required: python3, pip, cmake, ninja, clang, wget, curl, git"
+            return 1
+        fi
+        print_success "System dependencies installed"
+    fi
+}
 
-if [ -f "$MODEL_FILE" ]; then
-    success "Model already exists at $MODEL_FILE — skipping download."
-else
-    mkdir -p "$MODEL_DIR"
+# Install Python dependencies
+install_python_deps() {
+    print_status "Installing Python dependencies..."
+    
+    # Upgrade pip
+    pip install --upgrade pip
+    
+    # Install requirements
+    cd "$CODEY_V2_DIR"
+    pip install -r requirements.txt
+    
+    print_success "Python dependencies installed"
+}
 
-    # Check available storage
-    AVAIL=$(df -BG "$HOME_DIR" | awk 'NR==2 {print $4}' | tr -d 'G')
-    if [ "$AVAIL" -lt 5 ] 2>/dev/null; then
-        warning "Low storage: ${AVAIL}GB available. Model requires ~4.5GB."
-        read -p "  Continue anyway? [y/N]: " storage_ok
-        if [[ ! "$storage_ok" =~ ^[Yy]$ ]]; then
-            error "Aborted. Free up storage and re-run."
+# Install llama.cpp
+install_llama_cpp() {
+    print_status "Installing llama.cpp..."
+    
+    if [ -d "$LLAMA_CPP_DIR" ]; then
+        print_status "llama.cpp already exists, updating..."
+        cd "$LLAMA_CPP_DIR"
+        git pull
+    else
+        print_status "Cloning llama.cpp..."
+        git clone https://github.com/ggerganov/llama.cpp "$LLAMA_CPP_DIR"
+    fi
+    
+    # Build llama.cpp
+    cd "$LLAMA_CPP_DIR"
+    print_status "Building llama.cpp (this may take a few minutes)..."
+    cmake -B build -DLLAMA_CURL=OFF
+    cmake --build build --config Release -j$(nproc)
+    
+    # Verify build
+    if [ -f "$LLAMA_CPP_DIR/build/bin/llama-server" ]; then
+        print_success "llama.cpp installed successfully"
+    else
+        print_error "llama.cpp build failed"
+        return 1
+    fi
+}
+
+# Download a file with progress
+download_file() {
+    local url="$1"
+    local output="$2"
+    local description="$3"
+    
+    print_status "Downloading $description..."
+    
+    if command -v wget &> /dev/null; then
+        wget --show-progress -c -O "$output" "$url"
+    elif command -v curl &> /dev/null; then
+        curl -L -# -o "$output" "$url"
+    else
+        print_error "Neither wget nor curl found"
+        return 1
+    fi
+}
+
+# Download models
+download_models() {
+    print_status "Setting up model directories..."
+    mkdir -p "$PRIMARY_MODEL_DIR"
+    mkdir -p "$SECONDARY_MODEL_DIR"
+    
+    # Download primary model (7B)
+    PRIMARY_MODEL_PATH="$PRIMARY_MODEL_DIR/$PRIMARY_MODEL_FILE"
+    if [ -f "$PRIMARY_MODEL_PATH" ]; then
+        print_status "Primary model (7B) already exists, skipping..."
+    else
+        print_warning "Primary model (7B) is ~4.7GB - this will take a while"
+        print_warning "Press Ctrl+C to skip model download and download later"
+        
+        if download_file "$PRIMARY_MODEL_URL" "$PRIMARY_MODEL_PATH" "Primary model (7B)"; then
+            print_success "Primary model (7B) downloaded"
+        else
+            print_error "Failed to download primary model"
+            print_warning "You can download it manually later:"
+            print_warning "  wget -P $PRIMARY_MODEL_DIR $PRIMARY_MODEL_URL"
         fi
     fi
-
-    info "Downloading Qwen2.5-Coder-7B-Instruct-Q4_K_M (~4.5 GB)..."
-    info "This may take 30-90 minutes depending on your connection."
-    echo ""
-
-    wget -q --show-progress \
-        --continue \
-        -O "$MODEL_FILE" \
-        "$MODEL_URL" \
-    || curl -L \
-        --progress-bar \
-        --continue-at - \
-        -o "$MODEL_FILE" \
-        "$MODEL_URL" \
-    || error "Model download failed. Check your internet connection and retry."
-
-    # Verify size (should be > 4GB)
-    SIZE=$(stat -c%s "$MODEL_FILE" 2>/dev/null || echo 0)
-    if [ "$SIZE" -lt 4000000000 ]; then
-        warning "Downloaded file seems too small (${SIZE} bytes). May be incomplete."
-        warning "Re-run install.sh to resume the download."
+    
+    # Download secondary model (1.5B)
+    SECONDARY_MODEL_PATH="$SECONDARY_MODEL_DIR/$SECONDARY_MODEL_FILE"
+    if [ -f "$SECONDARY_MODEL_PATH" ]; then
+        print_status "Secondary model (1.5B) already exists, skipping..."
     else
-        success "Model downloaded ($(du -sh "$MODEL_FILE" | cut -f1))."
-    fi
-fi
-
-# ── Step 5: Clone Codey ───────────────────────────────────────
-header "Step 5/6: Installing Codey"
-
-if [ -d "$CODEY_DIR/.git" ]; then
-    info "Codey already installed — pulling latest..."
-    cd "$CODEY_DIR"
-    git pull --ff-only 2>/dev/null || warning "Could not pull latest (local changes?)"
-else
-    info "Cloning Codey..."
-    git clone "$CODEY_REPO" "$CODEY_DIR"
-fi
-
-# Make wrapper executable
-chmod +x "$CODEY_DIR/codey"
-success "Codey installed at $CODEY_DIR."
-
-# ── Step 6: PATH setup ────────────────────────────────────────
-header "Step 6/6: Configuring shell"
-
-BASHRC="$HOME_DIR/.bashrc"
-PROFILE="$HOME_DIR/.profile"
-
-add_to_file() {
-    local file="$1"
-    local line="$2"
-    grep -qxF "$line" "$file" 2>/dev/null || echo "$line" >> "$file"
-}
-
-PATH_LINE='export PATH="$HOME/codey:$PATH"'
-add_to_file "$BASHRC"  "$PATH_LINE"
-add_to_file "$PROFILE" "$PATH_LINE"
-
-# Also export for current session
-export PATH="$CODEY_DIR:$PATH"
-
-success "PATH configured."
-
-# ── Verify installation ───────────────────────────────────────
-header "Verifying installation"
-
-ERRORS=0
-
-check() {
-    local label="$1"
-    local path="$2"
-    if [ -e "$path" ]; then
-        success "$label"
-    else
-        error_msg "$label — not found at $path"
-        ERRORS=$((ERRORS + 1))
+        print_warning "Secondary model (1.5B) is ~2GB"
+        
+        if download_file "$SECONDARY_MODEL_URL" "$SECONDARY_MODEL_PATH" "Secondary model (1.5B)"; then
+            print_success "Secondary model (1.5B) downloaded"
+        else
+            print_error "Failed to download secondary model"
+            print_warning "You can download it manually later:"
+            print_warning "  wget -P $SECONDARY_MODEL_DIR $SECONDARY_MODEL_URL"
+        fi
     fi
 }
 
-error_msg() { echo -e "${RED}✗  $1${NC}"; }
+# Configure PATH
+setup_path() {
+    print_status "Configuring PATH..."
+    
+    # Determine shell config file
+    if [ -n "$BASH_VERSION" ]; then
+        SHELL_CONFIG="$HOME/.bashrc"
+    elif [ -n "$ZSH_VERSION" ]; then
+        SHELL_CONFIG="$HOME/.zshrc"
+    else
+        SHELL_CONFIG="$HOME/.bashrc"
+    fi
+    
+    # Check if already in PATH
+    if grep -q "codey-v2" "$SHELL_CONFIG" 2>/dev/null; then
+        print_status "Codey v2 already in PATH"
+    else
+        # Add to PATH
+        echo "" >> "$SHELL_CONFIG"
+        echo "# Codey v2" >> "$SHELL_CONFIG"
+        echo "export PATH=\"$CODEY_V2_DIR:\$PATH\"" >> "$SHELL_CONFIG"
+        print_success "Added Codey v2 to PATH in $SHELL_CONFIG"
+    fi
+    
+    # Source the config file
+    if [ -f "$SHELL_CONFIG" ]; then
+        source "$SHELL_CONFIG"
+    fi
+}
 
-check "llama-server binary"  "$LLAMA_DIR/build/bin/llama-server"
-check "Model file"           "$MODEL_FILE"
-check "Codey main.py"        "$CODEY_DIR/main.py"
-check "Codey wrapper"        "$CODEY_DIR/codey"
+# Make scripts executable
+make_executable() {
+    print_status "Making scripts executable..."
+    chmod +x "$CODEY_V2_DIR/codey2"
+    chmod +x "$CODEY_V2_DIR/codeyd2"
+    print_success "Scripts are now executable"
+}
 
-python3 -c "import rich" 2>/dev/null && success "Python: rich" || { error_msg "Python: rich missing"; ERRORS=$((ERRORS+1)); }
-python3 -c "import pytest" 2>/dev/null && success "Python: pytest" || { error_msg "Python: pytest missing"; ERRORS=$((ERRORS+1)); }
+# Create daemon directory
+setup_daemon_dir() {
+    print_status "Creating daemon directory..."
+    mkdir -p "$HOME/.codey-v2"
+    print_success "Daemon directory created"
+}
 
-if [ $ERRORS -gt 0 ]; then
-    echo ""
-    warning "$ERRORS issue(s) found. Re-run install.sh to fix."
-else
-    echo ""
-    echo -e "${BOLD}${GREEN}════════════════════════════════════════${NC}"
-    echo -e "${BOLD}${GREEN}  Installation complete!${NC}"
-    echo -e "${BOLD}${GREEN}════════════════════════════════════════${NC}"
-    echo ""
-    echo -e "  Run ${BOLD}source ~/.bashrc${NC} then type ${BOLD}codey${NC} to start."
-    echo ""
-    echo -e "  Quick start:"
-    echo -e "    ${CYAN}codey${NC}                          # interactive mode"
-    echo -e "    ${CYAN}codey \"create hello.py\"${NC}        # one-shot task"
-    echo -e "    ${CYAN}codey --init${NC}                   # generate project memory"
-    echo -e "    ${CYAN}codey --tdd app.py --tests t.py${NC} # TDD mode"
-    echo -e "    ${CYAN}codey --help${NC}                   # all options"
-    echo ""
-    echo -e "  First run loads the model (~15s). Subsequent queries are faster."
-    echo ""
-fi
+# Verify installation
+verify_installation() {
+    print_status "Verifying installation..."
+    
+    # Check Python
+    if command -v python3 &> /dev/null; then
+        print_success "Python3: $(python3 --version)"
+    else
+        print_error "Python3 not found"
+        return 1
+    fi
+    
+    # Check llama.cpp
+    if [ -f "$LLAMA_CPP_DIR/build/bin/llama-server" ]; then
+        print_success "llama.cpp: installed"
+    else
+        print_warning "llama.cpp: not found"
+    fi
+    
+    # Check models
+    if [ -f "$PRIMARY_MODEL_PATH" ]; then
+        print_success "Primary model (7B): installed"
+    else
+        print_warning "Primary model (7B): not downloaded"
+    fi
+    
+    if [ -f "$SECONDARY_MODEL_PATH" ]; then
+        print_success "Secondary model (1.5B): installed"
+    else
+        print_warning "Secondary model (1.5B): not downloaded"
+    fi
+    
+    # Check codey2 command
+    if command -v codey2 &> /dev/null; then
+        print_success "codey2 command: available"
+    else
+        print_warning "codey2 command: not in PATH (restart terminal or run: source $SHELL_CONFIG)"
+    fi
+}
+
+# Print completion message
+print_completion() {
+    echo
+    echo -e "${GREEN}"
+    echo "╔═══════════════════════════════════════════════════════════╗"
+    echo "║              Installation Complete!                       ║"
+    echo "╚═══════════════════════════════════════════════════════════╝"
+    echo -e "${NC}"
+    echo
+    echo "To start using Codey v2:"
+    echo
+    echo "  1. Restart your terminal OR run:"
+    echo "     ${BLUE}source $SHELL_CONFIG${NC}"
+    echo
+    echo "  2. Start the daemon:"
+    echo "     ${BLUE}codeyd2 start${NC}"
+    echo
+    echo "  3. Send your first task:"
+    echo "     ${BLUE}codey2 \"Hello, create a hello world Python script\"${NC}"
+    echo
+    echo "  4. Check status anytime:"
+    echo "     ${BLUE}codey2 status${NC}"
+    echo
+    echo "Useful commands:"
+    echo "  ${BLUE}codeyd2 start|stop|status|restart|reload|config${NC}"
+    echo "  ${BLUE}codey2 \"your prompt\"${NC}"
+    echo "  ${BLUE}codey2 task list${NC}"
+    echo "  ${BLUE}codey2 status${NC}"
+    echo
+    echo "Documentation: ${BLUE}$CODEY_V2_DIR/README.md${NC}"
+    echo
+    echo -e "${YELLOW}Note: If models weren't downloaded, you can download them manually:${NC}"
+    echo "  ${BLUE}wget -P $PRIMARY_MODEL_DIR $PRIMARY_MODEL_URL${NC}"
+    echo "  ${BLUE}wget -P $SECONDARY_MODEL_DIR $SECONDARY_MODEL_URL${NC}"
+    echo
+}
+
+# Main installation flow
+main() {
+    echo "This script will install Codey v2 and all dependencies."
+    echo "Estimated download size: ~7GB (models) + ~500MB (llama.cpp)"
+    echo
+    read -p "Continue? [Y/n] " -n 1 -r
+    echo
+    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+        echo "Installation cancelled."
+        exit 0
+    fi
+    echo
+    
+    check_termux
+    install_dependencies
+    install_python_deps
+    install_llama_cpp
+    download_models
+    make_executable
+    setup_daemon_dir
+    setup_path
+    verify_installation
+    print_completion
+}
+
+# Run main function
+main "$@"

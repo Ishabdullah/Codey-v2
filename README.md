@@ -1,6 +1,8 @@
-# Codey
+# Codey v2
 
-A local AI coding assistant for Termux, powered by Qwen2.5-Coder-7B running entirely on-device via llama.cpp. No cloud, no API keys, no data leaving your phone.
+**A persistent, daemon-like AI agent that lives on your device.**
+
+Codey v2 transforms Codey from a session-based CLI tool into a continuous AI agent—maintaining state, managing background tasks, and adapting to work without constant supervision. All while running locally on your Android device with dual-model hot-swap for thermal and memory efficiency.
 
 ```
   ██████╗ ██████╗ ██████╗ ███████╗██╗   ██╗
@@ -9,314 +11,509 @@ A local AI coding assistant for Termux, powered by Qwen2.5-Coder-7B running enti
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v1.0.0 · Local AI Coding Assistant · Termux
+  v2.0.0 · Persistent AI Agent · Termux
 ```
 
 ---
 
-## Features
+## Key Features
 
-- **ReAct agent loop** — thinks, calls tools, observes results, repeats
-- **Task orchestrator** — breaks complex tasks into subtask queues with a live checklist UI
-- **Repo map** — automatically scans project symbols on startup for better context
-- **Tiered memory** — LRU file eviction, relevance scoring, rolling summaries (4096 token budget)
-- **.codeyignore** — pattern-based file exclusion for context and auto-loading
-- **CODEY.md** — persistent project memory loaded on every session
-- **TDD loop** — write → test → fix → verify cycle with pytest
-- **File tools** — `write_file`, `patch_file` (with context matching), `read_file`, `append_file`, `list_dir`
-- **Shell execution** — runs commands with auto-retry and security hardening
-- **Workspace restriction** — file operations outside the project root require confirmation
-- **Session persistence** — opt-in resume via `--session` flag
-- **Source file protection** — agents cannot modify Codey's own source files
-- **Auto-commit** — offers to stage and commit changes after successful task completion
-- **Claude Code-style UI** — syntax-highlighted panels, colored diffs, task checklists
-- **Context bar** — live token usage + tokens/sec display
-- **Auto-summarization** — compresses long conversation history to save context
-- **File undo/diff** — `/undo` and `/diff` commands for any Codey-edited file
-- **Project detection** — auto-detects Python, Node, Rust, Go projects
-- **Search** — grep across project files with `/search`
-- **Git integration** — commit and push from chat with `/git`
+### 🔄 Persistent Daemon
+- Runs continuously in the background
+- Unix socket for instant CLI communication
+- Graceful shutdown and hot-reload support
+- State persists across restarts
+
+### 🧠 Hierarchical Memory
+- **Working Memory**: Currently edited files (evicted after task)
+- **Project Memory**: Key files like CODEY.md (never evicted)
+- **Long-term Memory**: Embeddings for semantic search
+- **Episodic Memory**: Complete action history
+
+### ⚡ Dual-Model Hot-Swap
+- **Primary**: Qwen2.5-Coder-7B for complex tasks
+- **Secondary**: Qwen2.5-1.5B for simple queries
+- Automatic routing based on input complexity
+- 30-second cooldown to prevent thrashing
+
+### 📋 Internal Planning
+- Native task queue with dependency tracking
+- Automatic task breakdown for complex requests
+- Strategy adaptation on failure
+- Background task scheduling
+
+### 🛡️ Self-Modification Safety
+- Checkpoint before any core file modification
+- Git integration for version control
+- Rollback to any checkpoint
+- Full file backup system
+
+### 🔍 Observability
+- `/status` command for full system state
+- Health monitoring (CPU, memory, uptime)
+- Token usage tracking
+- Task queue visibility
+
+### 🔥 Thermal Management
+- Tracks continuous inference duration
+- Warns after 5 minutes
+- Reduces threads after 10 minutes
+- Optimized for mobile devices (S24 Ultra)
+
+### 🔄 Error Recovery
+- Strategy switching on failures
+- `write_file` fails → try `patch_file`
+- Import error → suggest installation
+- Test failure → debug with targeted fixes
 
 ---
+
+## Quick Start
+
+### One-Line Installation
+
+```bash
+./install.sh
+```
+
+This single command installs everything:
+- Python dependencies
+- llama.cpp binary
+- Both models (7B primary + 1.5B secondary)
+- PATH configuration
+
+After installation, restart your terminal and run:
+
+```bash
+codeyd2 start              # Start the daemon
+codey2 "create hello.py"   # Send your first task
+codey2 status              # Check status anytime
+```
+
+### Manual Installation
+
+If you prefer to install components separately, follow these steps:
 
 ## Requirements
 
-- **Termux** on Android
-- **RAM:** 5GB+ available (model uses ~4.4GB)
-- **Storage:** ~5GB for model + ~500MB for llama.cpp
-- **Python:** 3.12+
-- **Packages:** `rich` (`pip install rich`)
+| Requirement | Specification |
+|-------------|---------------|
+| **OS** | Termux on Android (or Linux) |
+| **RAM** | 6GB+ available (dual-model support) |
+| **Storage** | ~10GB (7B model + 1.5B model + Codey) |
+| **Python** | 3.12+ |
+| **Packages** | `rich`, `sentence-transformers`, `numpy`, `watchdog` |
 
 ---
 
-## Installation
+## Installation (Manual)
 
-### 1. Install llama.cpp
+### Step 1: Install Dependencies
 
 ```bash
-pkg install cmake ninja clang
+pkg install cmake ninja clang python
+pip install rich sentence-transformers numpy watchdog
+```
+
+### Step 2: Install llama.cpp
+
+```bash
 git clone https://github.com/ggerganov/llama.cpp ~/llama.cpp
 cd ~/llama.cpp
 cmake -B build -DLLAMA_CURL=OFF
 cmake --build build --config Release -j4
 ```
 
-### 2. Download the model
+### Step 3: Download Models
 
 ```bash
+# Primary model (7B) - ~4.7GB
 mkdir -p ~/models/qwen2.5-coder-7b
 cd ~/models/qwen2.5-coder-7b
-# Download Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf from HuggingFace
-# ~4.7GB download
+wget https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf
+
+# Secondary model (1.5B) - ~2GB
+mkdir -p ~/models/qwen2.5-1.5b
+cd ~/models/qwen2.5-1.5b
+wget https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q8_0.gguf
 ```
 
-### 3. Install Codey
+### Step 4: Clone Codey v2
 
 ```bash
-git clone https://github.com/Ishabdullah/Codey.git ~/codey
-pip install rich
+git clone https://github.com/Ishabdullah/Codey.git ~/codey-v2
+cd ~/codey-v2
+chmod +x codey2 codeyd2
 ```
 
-### 4. Add to PATH
+### Step 5: Add to PATH
 
 ```bash
-echo 'export PATH="$HOME/codey:$PATH"' >> ~/.bashrc
+# Add to your shell config
+echo 'export PATH="$HOME/codey-v2:$PATH"' >> ~/.bashrc
 source ~/.bashrc
-chmod +x ~/codey/codey
+
+# Or run the setup script
+./setup.sh
 ```
 
-### 5. Verify
+### Step 6: Verify Installation
 
 ```bash
-codey --version
-# Codey v0.9.0
+codey2 --version
+codeyd2 status
 ```
 
 ---
 
-## Usage
+## Commands
 
-### One-shot mode
-```bash
-codey "create a Flask hello world app and run it"
-```
+### Daemon Management (`codeyd2`)
 
-### YOLO mode (skip confirmations)
-```bash
-codey --yolo "create todo.py with add_task remove_task list_tasks"
-```
-
-### Interactive chat
-```bash
-codey
-You> fix the bug in main.py
-```
-
-### Pre-load files
-```bash
-codey --read main.py utils.py "refactor the helper functions"
-```
-
-### Resume a session
-```bash
-codey --session abc123
-```
-
-### Generate project memory
-```bash
-codey --init
-```
-
-### TDD mode
-```bash
-codey --tdd "create a calculator with add subtract multiply divide"
-```
-
-### Plan mode (confirm before executing)
-```bash
-codey --plan "refactor the entire auth module"
-```
-
----
-
-## Chat Commands
-
-### File Commands
 | Command | Description |
-|---|---|
-| `/read <file>` | Load file into context |
-| `/load <file\|*.py\|dir/>` | Load file, glob pattern, or directory |
-| `/unread <file>` | Remove file from context |
-| `/ignore <pattern>` | Add pattern to `.codeyignore` file |
-| `/context` | Show loaded files with token counts and age |
-| `/diff [file]` | Show colored diff of Codey's changes |
-| `/undo [file]` | Restore file to previous version |
+|---------|-------------|
+| `codeyd2 start` | Start the daemon in background |
+| `codeyd2 stop` | Stop the running daemon |
+| `codeyd2 status` | Show daemon status |
+| `codeyd2 restart` | Restart the daemon |
+| `codeyd2 reload` | Send reload signal (SIGUSR1) |
+| `codeyd2 config` | Create default config file |
 
-### Project Commands
+### CLI Client (`codey2`)
+
 | Command | Description |
-|---|---|
-| `/init` | Generate CODEY.md project memory file |
-| `/memory` | Show current CODEY.md contents |
-| `/memory-status` | Show memory manager stats (files, summary, turn) |
-| `/project` | Show detected project type and key files |
-| `/search <pattern> [path]` | Search across project files |
-| `/git [commit\|push\|status]` | Git operations from chat |
-| `/cwd [path]` | Show or change working directory |
-
-### Session Commands
-| Command | Description |
-|---|---|
-| `/clear` | Clear history, file context, and undo history |
-| `/exit` | Quit Codey |
-| `/help` | Show all commands |
+|---------|-------------|
+| `codey2 "prompt"` | Send a task to the daemon |
+| `codey2 status` | Show full daemon status |
+| `codey2 task list` | List recent tasks |
+| `codey2 task <id>` | Get details of a specific task |
+| `codey2 cancel <id>` | Cancel a pending/running task |
+| `codey2 --daemon` | Run in foreground daemon mode |
 
 ---
 
-## CLI Flags
+## Usage Examples
 
-| Flag | Description |
-|---|---|
-| `--yolo` | Skip all confirmations |
-| `--plan` | Show and confirm plan before executing |
-| `--no-plan` | Disable orchestrator even for complex tasks |
-| `--tdd` | Enable TDD loop (write→test→fix→verify) |
-| `--session <id>` | Resume a saved session |
-| `--read <file>` | Pre-load files into context |
-| `--init` | Generate CODEY.md and exit |
-| `--chat` | Interactive mode even with an initial prompt |
-| `--threads <n>` | Override CPU thread count |
-| `--ctx <n>` | Override context window size |
-| `--version` | Show version |
-
----
-
-## How It Works
-
-### Agent Loop (ReAct)
-```
-User prompt
-    ↓
-Build system prompt (SYSTEM_PROMPT + CODEY.md + relevant files)
-    ↓
-Infer → parse tool call → execute tool → observe result
-    ↓ (loop until done or max steps)
-Final answer
+### Simple Query (uses 1.5B model)
+```bash
+./codey2 "What is 2+2?"
 ```
 
-### Tool Call Format
-The model outputs tool calls in this format:
-```
-<tool>
-{"name": "write_file", "args": {"path": "hello.py", "content": "print('hello')"}}
-</tool>
+### Complex Task (uses 7B model)
+```bash
+./codey2 "Create a REST API with user authentication and JWT tokens"
 ```
 
-### Available Tools
-| Tool | Description |
-|---|---|
-| `write_file` | Create or overwrite a file |
-| `patch_file` | Surgical find/replace within a file |
-| `read_file` | Read file contents |
-| `append_file` | Append to a file |
-| `list_dir` | List directory contents |
-| `shell` | Execute a shell command |
-| `search_files` | Grep pattern across files |
-
-### Task Orchestrator
-For complex multi-step tasks (>100 chars with 3+ action signals), Codey plans subtasks first:
-```
-╭─────────────────── Task Plan  0/3 ───────────────────╮
-│   ☐  1. Create todo.py with add_task remove_task...  │
-│   ☐  2. Create test_todo.py with 3 pytest tests      │
-│   ☐  3. Run tests and fix any failures               │
-╰──────────────────────────────────────────────────────╯
-  Execute this plan? [Y/n]:
+### Check Daemon Health
+```bash
+./codey2 status
 ```
 
-Each subtask runs in an isolated context. The checklist updates live with ✓ as tasks complete.
-
-### Memory Architecture
+Output:
 ```
-┌──────────────────────────────────────────┐
-│           4096 TOKEN WINDOW              │
-├──────────────┬───────────────────────────┤
-│ FIXED (~700) │ System prompt + CODEY.md  │
-├──────────────┼───────────────────────────┤
-│ ANCHOR (~300)│ Rolling work summary      │ ← compressed history
-├──────────────┼───────────────────────────┤
-│ DYNAMIC(~800)│ Relevant files only       │ ← LRU + relevance scored
-├──────────────┼───────────────────────────┤
-│ HOT (~500)   │ Last 3 conversation turns │ ← always kept
-├──────────────┼───────────────────────────┤
-│ CURRENT(~300)│ This message              │
-├──────────────┼───────────────────────────┤
-│ RESPONSE(~1296)│ Model output budget     │
-└──────────────┴───────────────────────────┘
-```
+==================================================
+Codey v2 Status
+==================================================
 
----
+Version:  2.0.0
+PID:      12345
+Uptime:   3600s
 
-## CODEY.md — Project Memory
+Model:
+  Active:       primary
+  Temperature:  0.2
+  Context:      4096
 
-Run `/init` in any project directory to generate a `CODEY.md` file. Codey auto-loads this on every session, giving it accurate context about your project without wasting tokens on repeated directory scans.
+Tasks:
+  Pending:  0
+  Running:  0
 
-Example:
-```markdown
-# Project
-A FastAPI REST API for task management.
+Memory:
+  RSS:        45.2 MB
+  Files:      3
 
-# Stack
-- Python 3.12, FastAPI, SQLite, pytest
+Health:
+  CPU:        2.5%
+  Model:      Loaded
 
-# Structure
-- main.py — app entry point and routes
-- models.py — SQLAlchemy models
-- tests/ — pytest test suite
-
-# Commands
-- Run: uvicorn main:app --reload
-- Test: pytest tests/
+==================================================
 ```
 
----
+### List Tasks
+```bash
+./codey2 task list
+```
 
-## Performance
+Output:
+```
+Tasks:
+  [5] ✓ Create Flask hello world app
+  [4] ✓ Set up project structure
+  [3] ✓ Write tests
+  [2] ○ Running: Install dependencies
+  [1] ○ Pending: Create requirements.txt
+```
 
-| Metric | Value |
-|---|---|
-| Model | Qwen2.5-Coder-7B-Instruct Q4_K_M |
-| RAM usage | ~4.4GB |
-| Context window | 4096 tokens |
-| Threads | 4 (configurable) |
-| Speed | ~7-8 t/s on modern Android |
-| Cold start | ~15s first inference |
-| Warm inference | ~2-3s |
+### Cancel a Task
+```bash
+./codey2 cancel 2
+```
 
 ---
 
 ## Configuration
 
-Edit `~/codey/utils/config.py`:
+### Default Config Location
+`~/.codey-v2/config.json`
+
+### Create Default Config
+```bash
+./codeyd2 config
+```
+
+### Configuration Options
+
+```json
+{
+  "daemon": {
+    "pid_file": "~/.codey-v2/codey.pid",
+    "socket_file": "~/.codey-v2/codey.sock",
+    "log_file": "~/.codey-v2/codey.log",
+    "log_level": "INFO"
+  },
+  "tasks": {
+    "max_concurrent": 1,
+    "task_timeout": 1800,
+    "max_retries": 3
+  },
+  "health": {
+    "check_interval": 60,
+    "max_memory_mb": 1500,
+    "stuck_task_threshold": 1800
+  },
+  "state": {
+    "db_path": "~/.codey-v2/state.db",
+    "cleanup_old_actions_hours": 24
+  }
+}
+```
+
+### Model Configuration
+
+Edit `~/codey-v2/utils/config.py`:
 
 ```python
 MODEL_CONFIG = {
-    "n_ctx":          4096,   # context window
-    "n_threads":      4,      # CPU threads (lower = less heat)
-    "n_batch":        256,    # batch size
-    "max_tokens":     1024,   # max response length
-    "temperature":    0.2,    # lower = more deterministic
-    "top_p":          0.95,
-    "top_p":          40,
+    "n_ctx":          4096,      # Context window
+    "n_threads":      4,         # CPU threads
+    "n_gpu_layers":   0,         # GPU offload (0 = CPU only)
+    "temperature":    0.2,       # Lower = more deterministic
+    "max_tokens":     1024,      # Max response length
     "repeat_penalty": 1.1,
-    "kv_cache_type":  "q8_0", # quantized KV cache saves RAM
 }
 
-AGENT_CONFIG = {
-    "max_steps":      6,      # tool call limit per task
-    "history_turns":  6,      # conversation turns to keep
-    "confirm_shell":  True,   # ask before running shell commands
-    "confirm_write":  True,   # ask before writing files
+ROUTER_CONFIG = {
+    "simple_max_chars": 50,      # Under this → 1.5B model
+    "simple_keywords": ["hello", "hi", "thanks", "bye"],
+    "swap_cooldown_sec": 30,     # Cooldown before swapping
 }
+
+THERMAL_CONFIG = {
+    "enabled": True,
+    "warn_after_sec": 300,       # 5 min → warning
+    "reduce_threads_after_sec": 600,  # 10 min → reduce threads
+}
+```
+
+---
+
+## Architecture
+
+```
+┌─────────────────────────────────────────────────────────┐
+│                   CLI Client (codey2)                   │
+│  ── User commands, flags, task queries, /status         │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│                   Daemon Core (codeyd2)                 │
+│  ── Main event loop (asyncio)                           │
+│  ── Signal handlers (SIGTERM, SIGUSR1)                  │
+│  ── Unix socket listener                                │
+└─────────────────────────────────────────────────────────┘
+                          │
+    ┌─────────────────────┼─────────────────────┐
+    ▼                     ▼                     ▼
+┌──────────────────┐ ┌──────────────────┐ ┌──────────────────┐
+│   Planner        │ │   Memory         │ │   Tools          │
+│   • Task queue   │ │   • Working      │ │   • Filesystem   │
+│   • Dependencies │ │   • Project      │ │   • Shell        │
+│   • Adaptation   │ │   • Long-term    │ │   • Search       │
+│   • Background   │ │   • Episodic     │ │                  │
+└──────────────────┘ └──────────────────┘ └──────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│                   LLM Layer                             │
+│  ── Model router (7B ↔ 1.5B hot-swap)                  │
+│  ── Direct llama.cpp binding                            │
+│  ── Thermal management                                  │
+└─────────────────────────────────────────────────────────┘
+                          │
+                          ▼
+┌─────────────────────────────────────────────────────────┐
+│                   State Store (SQLite)                  │
+│  ── Persistent memory, task queue, episodic log         │
+│  ── Model state, embeddings, checkpoints                │
+└─────────────────────────────────────────────────────────┘
+```
+
+---
+
+## Memory System
+
+### Four-Tier Architecture
+
+```
+┌─────────────────────────────────────────┐
+│  Working Memory (in-memory, evicted)    │
+│  - Currently edited files               │
+│  - Fast access, token-limited           │
+│  - Cleared after task completes         │
+└─────────────────────────────────────────┘
+              │
+┌─────────────────────────────────────────┐
+│  Project Memory (persistent)            │
+│  - Key files: CODEY.md, README.md       │
+│  - Never evicted                        │
+│  - Loaded at daemon start               │
+└─────────────────────────────────────────┘
+              │
+┌─────────────────────────────────────────┐
+│  Long-term Memory (embeddings)          │
+│  - sentence-transformers (all-MiniLM)   │
+│  - Semantic search via similarity       │
+│  - Stored in SQLite                     │
+└─────────────────────────────────────────┘
+              │
+┌─────────────────────────────────────────┐
+│  Episodic Memory (action log)           │
+│  - Append-only log of all actions       │
+│  - "What did I do last week?"           │
+│  - SQLite via state store               │
+└─────────────────────────────────────────┘
+```
+
+### Using Memory
+
+```python
+from core.memory_v2 import get_memory
+
+memory = get_memory()
+
+# Working memory (temporary)
+memory.add_to_working("file.py", content, tokens)
+memory.clear_working()  # After task
+
+# Project memory (persistent)
+memory.add_to_project("CODEY.md", content, is_protected=True)
+
+# Long-term memory (semantic search)
+memory.store_in_longterm("file.py", content)
+results = memory.search("find authentication code", limit=5)
+
+# Episodic memory (log)
+memory.log_action("file_modified", "auth.py")
+```
+
+---
+
+## Error Recovery
+
+### Strategy Switching
+
+Instead of fixed retries, Codey adapts its approach on failure:
+
+| Error Type | Fallback Strategy | Confidence |
+|------------|-------------------|------------|
+| `write_file` fails | Try `patch_file` | 0.9 |
+| File not found | Create file first | 0.95 |
+| Shell command fails | Search for solution | 0.8 |
+| Import error | Install package | 0.9 |
+| Syntax error | Fix syntax | 0.85 |
+| Test failure | Debug test | 0.85 |
+| Permission error | Fix permissions | 0.85 |
+
+### Example
+
+```
+Error: "Failed to write file: permission denied"
+→ Recovery: Trying "use_patch" - Use patch instead of full write
+```
+
+---
+
+## Thermal Management
+
+Codey v2 is optimized for mobile devices:
+
+| Threshold | Action |
+|-----------|--------|
+| 5 min continuous inference | Log warning |
+| 10 min continuous inference | Reduce threads (4→2) |
+| Cooldown period | Restore original threads |
+
+### Check Thermal Status
+
+```bash
+./codey2 status
+```
+
+Output includes:
+```
+Health:
+  CPU:        2.5%
+  Model:      Loaded
+  Throttled:  No
+```
+
+---
+
+## Self-Modification Safety
+
+### Checkpoints
+
+Before modifying any core file, Codey creates a checkpoint:
+
+```bash
+# Create checkpoint
+from core.checkpoint import create_checkpoint
+cp_id = create_checkpoint("Adding new feature")
+
+# List checkpoints
+from core.checkpoint import list_checkpoints
+cps = list_checkpoints(limit=10)
+
+# Rollback
+from core.checkpoint import rollback
+rollback(cp_id)
+```
+
+### Checkpoint Structure
+
+```
+~/.codey-v2/checkpoints/
+├── 1772934678/          # Timestamp ID
+│   ├── core/
+│   │   ├── agent.py
+│   │   ├── daemon.py
+│   │   └── ...
+│   ├── tools/
+│   │   └── ...
+│   └── main.py
+└── 1772934700/
+    └── ...
 ```
 
 ---
@@ -324,83 +521,213 @@ AGENT_CONFIG = {
 ## Project Structure
 
 ```
-~/codey/
-├── main.py                 # CLI entrypoint, REPL, command handling
-├── codey                   # shell launcher script
-├── CODEY.md                # project memory for Codey itself
+~/codey-v2/
+├── codey2                  # CLI client script
+├── codeyd2                 # Daemon manager script
+├── main.py                 # Main entrypoint
+├── codey-v2.md             # This implementation plan
 ├── core/
-│   ├── agent.py            # ReAct tool loop, hallucination guard
-│   ├── inference.py        # llama-server HTTP client, TPS tracking
-│   ├── loader.py           # binary/model path validation
-│   ├── orchestrator.py     # task planning and queue execution
-│   ├── taskqueue.py        # persistent task queue (JSON)
-│   ├── display.py          # Rich UI panels, checklists, diffs
-│   ├── memory.py           # MemoryManager: LRU + relevance scoring
-│   ├── context.py          # file context wrapper over MemoryManager
-│   ├── sessions.py         # session save/load/list
-│   ├── tdd.py              # TDD loop: write→test→fix→verify
-│   ├── planner.py          # plan mode: generate and confirm plan
-│   ├── summarizer.py       # conversation compression
-│   ├── codeymd.py          # CODEY.md read/write/generate
-│   ├── tokens.py           # token counting, context bar, TPS
-│   └── project.py          # project type detection
+│   ├── daemon.py           # Daemon core with socket server
+│   ├── daemon_config.py    # Configuration manager
+│   ├── state.py            # SQLite state store
+│   ├── task_executor.py    # Task execution with recovery
+│   ├── planner_v2.py       # Internal task planner
+│   ├── background.py       # Background tasks & file watches
+│   ├── filesystem.py       # Direct filesystem access
+│   ├── memory_v2.py        # Four-tier memory system
+│   ├── embeddings.py       # Sentence-transformers integration
+│   ├── router.py           # Model routing heuristic
+│   ├── loader_v2.py        # Model loading/hot-swap
+│   ├── inference_v2.py     # Dual-model inference
+│   ├── checkpoint.py       # Self-modification safety
+│   ├── observability.py    # Self-state queries
+│   ├── recovery.py         # Error recovery strategies
+│   └── thermal.py          # Thermal management
 ├── tools/
-│   ├── file_tools.py       # write/read/append/list + PROTECTED_FILES
-│   ├── patch_tools.py      # surgical find/replace with undo snapshot
-│   └── shell_tools.py      # shell execution with safety checks
-├── prompts/
-│   └── system_prompt.py    # system prompt and tool format
-└── utils/
-    ├── config.py           # all settings
-    ├── logger.py           # rich terminal output helpers
-    └── file_utils.py       # low-level file operations
-| `/undo [file]` | Restore file to previous version |
+│   └── file_tools.py       # Refactored file operations
+├── utils/
+│   ├── config.py           # All configuration
+│   └── logger.py           # Logging with levels
+└── prompts/
+    └── system_prompt.py    # System prompt
+```
 
 ---
 
-## Features In-Depth
+## API Reference
 
-### .codeyignore
-Create a `.codeyignore` file in your project root to prevent Codey from reading certain files. It supports glob-style patterns (e.g., `*.log`, `node_modules/`, `secrets/`). 
-Default ignores include: `.git`, `__pycache__`, `.env`, and private keys.
+### Daemon Functions
 
-### Repo Map
-Codey automatically generates a lightweight "map" of your project structure (classes, functions, and imports) on startup. This provides the model with architectural context without loading full file contents into the token window.
+```python
+from core.daemon import daemon_status, daemon_health, daemon_ping
 
-### Workspace Restriction
-To prevent unintended modifications, Codey restricts its file tools to the current project directory. Any attempt to read or write a file outside the workspace root will trigger a confirmation prompt.
+# Check if daemon is running
+status = daemon_status()
 
-### Auto-Commit
-After completing a task or running successful tests, Codey will check your git status. If changes are detected, it will offer to stage and commit them automatically with a descriptive message based on the task.
+# Get health metrics
+health = daemon_health()
+
+# Ping daemon
+pong = daemon_ping()
+```
+
+### State Store
+
+```python
+from core.state import get_state_store
+
+state = get_state_store()
+
+# Key-value operations
+state.set("key", "value")
+value = state.get("key")
+state.delete("key")
+
+# Task operations
+task_id = state.add_task("description")
+state.start_task(task_id)
+state.complete_task(task_id, "result")
+state.fail_task(task_id, "error")
+
+# Episodic log
+state.log_action("action", "details")
+actions = state.get_recent_actions(limit=50)
+```
+
+### Planner
+
+```python
+from core.planner_v2 import get_planner
+
+planner = get_planner()
+
+# Add tasks
+task_id = planner.add_task("Build a REST API")
+task_ids = planner.add_tasks([
+    "Set up project structure",
+    "Create main application",
+    "Write tests",
+])
+
+# Get next ready task
+task = planner.get_next_task()
+
+# Break down complex task
+subtasks = planner.breakdown_complex_task("Build a Flask app")
+
+# Adapt on failure
+alternative = planner.adapt(task_id, "Permission denied")
+```
+
+### Observability
+
+```python
+from core.observability import get_state
+
+state = get_state()
+
+# Query properties
+tokens = state.tokens_used
+memory = state.memory_loaded
+pending = state.tasks_pending
+model = state.model_active
+temp = state.temperature
+
+# Full status
+status = state.get_full_status()
+```
+
+---
+
+## Performance
+
+| Metric | Value |
+|--------|-------|
+| **Primary Model** | Qwen2.5-Coder-7B-Instruct Q4_K_M |
+| **Secondary Model** | Qwen2.5-1.5B-Instruct Q8_0 |
+| **RAM Usage (idle)** | ~200MB |
+| **RAM Usage (7B)** | ~4.4GB |
+| **RAM Usage (1.5B)** | ~1.2GB |
+| **Context Window** | 4096 tokens |
+| **Threads** | 4 (reducible to 2) |
+| **Speed (7B)** | ~7-8 t/s |
+| **Speed (1.5B)** | ~20-25 t/s |
+| **Hot-swap Delay** | 2-3 seconds |
+
+---
+
+## Troubleshooting
+
+### Daemon Won't Start
+
+```bash
+# Check for stale PID file
+rm -f ~/.codey-v2/codey.pid
+
+# Check logs
+cat ~/.codey-v2/codey.log
+
+# Restart
+./codeyd2 restart
+```
+
+### Socket Connection Failed
+
+```bash
+# Verify daemon is running
+./codeyd2 status
+
+# Check socket exists
+ls -la ~/.codey-v2/codey.sock
+```
+
+### Model Not Found
+
+```bash
+# Verify model paths
+ls -la ~/models/qwen2.5-coder-7b/
+ls -la ~/models/qwen2.5-1.5b/
+```
+
+### High Memory Usage
+
+```bash
+# Check status
+./codey2 status
+
+# Restart daemon (clears working memory)
+./codeyd2 restart
+```
 
 ---
 
 ## Version History
 
 | Version | Highlights |
-|---|---|
-| v1.0.0 | Production release — full stability, security hardening, repo map, task orchestrator |
-| v0.9.5 | Strip "Final Answer:" from checklists, refined planner prompts |
-| v0.9.4 | Added `--no-plan` flag and `/ignore` command |
-| v0.9.3 | Repo map, auto-commit after tasks, context-aware `patch_file` instructions |
-| v0.9.2 | Portable paths (auto-detect llama-server), shell hardening, session redaction, workspace root restriction |
-| v0.9.1 | P1 stability fixes: robust JSON parser, patch collision checks, `.codeyignore` support |
-| v0.9.0 | Task orchestrator, subtask queues, source file protection, TPS display |
-
-
----
-
-## Known Limitations
-
-- **7B model quality** — complex multi-file refactors may require guidance
-- **4096 token window** — large projects need selective file loading
-- **Serial execution** — no parallel tool calls or async inference
-- **No repo indexing** — no vector DB or Tree-sitter; relies on explicit file loading
-- **Termux only** — shell commands assume Linux/Android environment
+|---------|------------|
+| **v2.0.0** | **Complete 7-phase implementation** - Daemon, Memory, Dual-Model, Planner, Checkpoints, Observability, Recovery |
+| v1.0.0 | Original Codey - Session-based CLI with ReAct agent |
 
 ---
 
 ## License
 
-MIT
+MIT License - See LICENSE file for details.
 
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Run tests
+5. Submit a pull request
+
+---
+
+## Acknowledgments
+
+- [llama.cpp](https://github.com/ggerganov/llama.cpp) for efficient LLM inference
+- [Qwen](https://huggingface.co/Qwen) for the excellent code models
+- [sentence-transformers](https://github.com/UKPLab/sentence-transformers) for embeddings
