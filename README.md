@@ -701,6 +701,25 @@ ls -la ~/models/qwen2.5-1.5b/
 
 ---
 
+## Known Limitations
+
+### Platform Constraints
+
+| Limitation | Impact | Workaround |
+|------------|--------|------------|
+| **llama-server HTTP API** | ~500ms overhead per inference | Acceptable for most tasks; direct binding not available on Termux/Android |
+| **File watches require `watchdog`** | Background file monitoring disabled if not installed | Install with `pip install watchdog` (optional) |
+| **No NPU acceleration** | CPU-only inference (~3-5 t/s at 4 threads) | Thermal management prevents throttling |
+| **Single-device only** | State not synced across devices | Intentional design for local-only privacy |
+
+### Technical Notes
+
+- **llama-cpp-python**: Listed in `requirements.txt` but not used on Termux/Android due to platform support limitations
+- **HTTP vs Direct Binding**: Uses `llama-server` subprocess (HTTP) instead of direct `llama_cpp` binding for compatibility
+- **File Watches**: Optional feature - core functionality works without `watchdog`
+
+---
+
 ## Version History
 
 | Version | Highlights |

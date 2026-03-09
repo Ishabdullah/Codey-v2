@@ -1109,6 +1109,25 @@ def health_check() -> dict:
 
 ---
 
+## Known Limitations
+
+### Platform Constraints
+
+| Limitation | Impact | Status |
+|------------|--------|--------|
+| **llama-server HTTP API** | ~500ms overhead per inference | Uses `llama-server` subprocess instead of direct `llama-cpp-python` binding due to Termux/Android platform support |
+| **File watches** | Requires `watchdog` package | Optional dependency - install with `pip install watchdog` |
+| **No NPU acceleration** | CPU-only inference (~3-5 t/s at 4 threads) | Blocked on upstream llama.cpp NPU support |
+| **Single-device only** | State not synced across devices | Intentional design for local-only privacy |
+
+### Technical Notes
+
+- **llama-cpp-python**: Included in `requirements.txt` but not actively used on Termux/Android
+- **HTTP vs Direct Binding**: Current implementation uses `llama-server` HTTP API for compatibility
+- **File Watches**: Core functionality works without `watchdog`; file watching is optional
+
+---
+
 ## Future Extensions (Out of Scope for v2)
 
 These are nice-to-have improvements explicitly **not** in the initial implementation:
