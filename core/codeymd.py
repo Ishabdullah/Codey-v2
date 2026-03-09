@@ -3,6 +3,7 @@ from pathlib import Path
 from utils.logger import success, info
 
 CODEYMD_FILENAME = "CODEY.md"
+_codeymd_cache: dict = {}  # tracks which paths we've already logged
 
 def find_codeymd(start: str = None) -> Path | None:
     start = Path(start or os.getcwd())

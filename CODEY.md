@@ -1,5 +1,5 @@
 # Project
-Codey is a local AI coding assistant for Termux that runs Qwen2.5-Coder-7B-Instruct via llama-server and can create files, run shell commands, and fix errors autonomously.
+Codey-v2 is a local AI coding assistant for Termux that runs Qwen2.5-Coder-7B-Instruct via llama-server and can create files, run shell commands, and fix errors autonomously.
 
 # Stack
 - Python 3.12
@@ -23,11 +23,11 @@ Codey is a local AI coding assistant for Termux that runs Qwen2.5-Coder-7B-Instr
 - utils/logger.py — rich terminal output helpers
 
 # Commands
-- Run: codey "task"
-- Interactive: codey
-- Skip confirms: codey --yolo "task"
-- Pre-load file: codey --read file.py "task"
-- Generate memory: codey --init
+- Run: codey-v2 "task"
+- Interactive: codey-v2
+- Skip confirms: codey-v2 --yolo "task"
+- Pre-load file: codey-v2 --read file.py "task"
+- Generate memory: codey-v2 --init
 
 # Conventions
 - Tool calls use <tool>{"name": "...", "args": {...}}</tool> format

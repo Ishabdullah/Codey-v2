@@ -37,7 +37,20 @@ def _server_ready(retries=90, delay=1.0) -> bool:
 def _start_server():
     global _server_proc
     if _server_proc and _server_proc.poll() is None:
-        return
+        # Check if thermal manager has requested a server restart (thread reduction)
+        try:
+            from core.thermal import get_thermal_manager
+            tm = get_thermal_manager()
+            if tm.restart_recommended:
+                info(f"Thermal: restarting server with {tm.current_threads} threads...")
+                _server_proc.terminate()
+                _server_proc.wait(timeout=10)
+                _server_proc = None
+                tm.restart_recommended = False
+        except Exception:
+            pass
+        if _server_proc and _server_proc.poll() is None:
+            return
 
     cfg = MODEL_CONFIG
     cmd = [
@@ -108,8 +121,7 @@ def infer(messages: list[dict], stream: bool = True, extra_stop: list = None) ->
 
     response_text = ""
 
-    import time as _time
-    _t0 = _time.time()
+    _t0 = time.time()
     try:
         with urllib.request.urlopen(req, timeout=300) as resp:
             if stream:
@@ -129,10 +141,11 @@ def infer(messages: list[dict], stream: bool = True, extra_stop: list = None) ->
                     except Exception:
                         continue
                 print()
-                import time as _time
-                _elapsed = _time.time() - _t0
+                _elapsed = time.time() - _t0
                 if _elapsed > 0 and response_text:
-                    last_tps = round(len(response_text.split()) / _elapsed, 1)
+                    # Approximate tokens from character count (same heuristic as estimate_tokens)
+                    approx_tokens = len(response_text) / 4
+                    last_tps = round(approx_tokens / _elapsed, 1)
                 sys.stdout.flush()
             else:
                 data = json.loads(resp.read())

@@ -1,27 +1,229 @@
 #!/usr/bin/env python3
 """
-Model loader for Codey v2.
+Model loader for Codey-v2 - Termux/Android compatible.
 
-Manages loading/unloading of models with hot-swap capability:
+Uses llama-server binary via subprocess instead of llama-cpp-python bindings
+(since llama-cpp-python doesn't support Android platform).
+
+Features:
 - Primary model (7B) for complex tasks
 - Secondary model (1.5B) for simple tasks
-- Hot-swap with 2-3 second delay
-- Cooldown to prevent thrashing
+- HTTP API communication with llama-server
+- Model hot-swap with cooldown
 """
 
+import subprocess
 import time
+import socket
+import urllib.request
+import urllib.error
+import json
+import os
+import signal
 from typing import Optional, Literal
 from pathlib import Path
 
 from utils.logger import info, warning, error, success
-from utils.config import MODEL_PATH, SECONDARY_MODEL_PATH, MODEL_CONFIG, ROUTER_CONFIG
+from utils.config import MODEL_PATH, SECONDARY_MODEL_PATH, MODEL_CONFIG, ROUTER_CONFIG, LLAMA_SERVER_BIN
 
 ModelType = Literal["primary", "secondary"]
+
+# llama-server configuration
+SERVER_HOST = "127.0.0.1"
+SERVER_PORT = 8080  # Default llama-server port
+
+
+class LlamaServer:
+    """
+    Manages llama-server subprocess and HTTP API communication.
+    
+    Starts llama-server as a background process and communicates
+    via HTTP API for inference.
+    """
+    
+    def __init__(self, model_path: Path, model_type: ModelType):
+        self.model_path = model_path
+        self.model_type = model_type
+        self.process: Optional[subprocess.Popen] = None
+        self.port = SERVER_PORT
+        self._started = False
+        
+    def start(self) -> bool:
+        """Start llama-server subprocess."""
+        try:
+            if self.process and self.process.poll() is None:
+                # Already running
+                return True
+            
+            info(f"Starting llama-server for {self.model_type} model...")
+            
+            # Build command
+            cmd = [
+                str(LLAMA_SERVER_BIN),
+                "-m", str(self.model_path),
+                "--host", SERVER_HOST,
+                "--port", str(self.port),
+                "-c", str(MODEL_CONFIG["n_ctx"]),
+                "-t", str(MODEL_CONFIG["n_threads"]),
+                "--temp", str(MODEL_CONFIG["temperature"]),
+                "--top-p", str(MODEL_CONFIG["top_p"]),
+                "--top-k", str(MODEL_CONFIG["top_k"]),
+                "--repeat-penalty", str(MODEL_CONFIG["repeat_penalty"]),
+                "--n-predict", str(MODEL_CONFIG["max_tokens"]),
+            ]
+            
+            # Add stop tokens (using --reverse-prompt)
+            for stop in MODEL_CONFIG.get("stop", []):
+                cmd.extend(["--reverse-prompt", stop])
+            
+            # Start process - redirect output to log file to avoid pipe buffer issues
+            log_file = Path.home() / ".codey-v2" / "llama-server.log"
+            log_file.parent.mkdir(parents=True, exist_ok=True)
+            
+            with open(log_file, "w") as f:
+                f.write(f"Starting llama-server: {' '.join(cmd)}\n")
+                f.flush()
+            
+            # Open log file for appending stdout/stderr
+            log_fd = open(log_file, "a")
+            
+            self.process = subprocess.Popen(
+                cmd,
+                stdout=log_fd,
+                stderr=subprocess.STDOUT,
+                preexec_fn=os.setsid if os.name != 'nt' else None,
+            )
+            
+            info(f"llama-server PID: {self.process.pid}, logging to {log_file}")
+            
+            # Wait for server to be ready (up to 60 seconds for large models)
+            for i in range(120):  # 120 * 0.5s = 60s timeout
+                time.sleep(0.5)
+                
+                # Check if process died
+                if self.process.poll() is not None:
+                    error(f"llama-server process died (exit code {self.process.poll()})")
+                    # Read log for error
+                    try:
+                        with open(log_file, "r") as f:
+                            logs = f.read()
+                        error(f"Server log: {logs[-1000:]}")
+                    except:
+                        pass
+                    return False
+                
+                if self._check_health():
+                    # Give server a moment to fully initialize all endpoints
+                    time.sleep(0.5)
+                    self._started = True
+                    success(f"llama-server started for {self.model_type} model on port {self.port}")
+                    return True
+                    
+            error(f"Timeout waiting for llama-server to start")
+            self.stop()
+            return False
+            
+        except Exception as e:
+            error(f"Failed to start llama-server: {e}")
+            import traceback
+            error(traceback.format_exc())
+            return False
+    
+    def stop(self):
+        """Stop llama-server subprocess."""
+        if self.process:
+            try:
+                info(f"Stopping llama-server for {self.model_type} model...")
+                # Kill process group
+                if os.name != 'nt':
+                    os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+                else:
+                    self.process.terminate()
+                self.process.wait(timeout=5)
+                success("llama-server stopped")
+            except Exception as e:
+                warning(f"Error stopping llama-server: {e}")
+                if self.process:
+                    self.process.kill()
+            finally:
+                self.process = None
+                self._started = False
+    
+    def _check_health(self) -> bool:
+        """Check if server is responding."""
+        try:
+            url = f"http://{SERVER_HOST}:{self.port}/health"
+            with urllib.request.urlopen(url, timeout=2) as response:
+                return response.status == 200
+        except:
+            return False
+    
+    def infer(self, prompt: str, max_tokens: int = None) -> Optional[str]:
+        """Run inference via HTTP API."""
+        if not self._started or not self.process:
+            error("llama-server not running")
+            return None
+
+        # Retry logic for transient errors
+        max_retries = 3
+        last_error = None
+
+        for attempt in range(max_retries):
+            try:
+                url = f"http://{SERVER_HOST}:{self.port}/completion"
+                data = {
+                    "prompt": prompt,
+                    "n_predict": max_tokens or MODEL_CONFIG["max_tokens"],
+                    "temperature": MODEL_CONFIG["temperature"],
+                    "top_p": MODEL_CONFIG["top_p"],
+                    "top_k": MODEL_CONFIG["top_k"],
+                    "repeat_penalty": MODEL_CONFIG["repeat_penalty"],
+                    "stop": MODEL_CONFIG.get("stop", []),
+                    "stream": False,
+                }
+
+                req = urllib.request.Request(
+                    url,
+                    data=json.dumps(data).encode('utf-8'),
+                    headers={'Content-Type': 'application/json'},
+                    method='POST'
+                )
+
+                with urllib.request.urlopen(req, timeout=120) as response:
+                    result = json.loads(response.read().decode('utf-8'))
+                    return result.get("content", "").strip()
+
+            except urllib.error.HTTPError as e:
+                if e.code == 503 and attempt < max_retries - 1:
+                    warning(f"Server busy (503), retrying ({attempt + 1}/{max_retries})...")
+                    time.sleep(1.0)
+                    last_error = e
+                    continue
+                error(f"HTTP error during inference: {e}")
+                return None
+            except urllib.error.URLError as e:
+                error(f"HTTP error during inference: {e}")
+                return None
+            except json.JSONDecodeError as e:
+                error(f"JSON decode error: {e}")
+                return None
+            except Exception as e:
+                error(f"Inference error: {e}")
+                return None
+
+        error(f"All retries failed: {last_error}")
+        return None
+    
+    def is_running(self) -> bool:
+        """Check if server process is running."""
+        if self.process is None:
+            return False
+        return self.process.poll() is None
 
 
 class ModelLoader:
     """
-    Manages model loading and hot-swapping.
+    Manages model loading and hot-swapping via llama-server.
     
     Supports:
     - Load primary (7B) or secondary (1.5B) model
@@ -29,134 +231,101 @@ class ModelLoader:
     - Hot-swap with cooldown
     - Track loaded model state
     """
-    
+
     def __init__(self):
         self._loaded_model: Optional[ModelType] = None
-        self._model_instance: Optional[object] = None
+        self._server: Optional[LlamaServer] = None
         self._loaded_at: float = 0
         self._load_failures: int = 0
-    
+
     def load_primary(self) -> bool:
-        """
-        Load the primary (7B) model.
-        
-        Returns:
-            True if loaded successfully, False otherwise
-        """
+        """Load the primary (7B) model."""
         return self._load_model("primary", MODEL_PATH)
-    
+
     def load_secondary(self) -> bool:
-        """
-        Load the secondary (1.5B) model.
-        
-        Returns:
-            True if loaded successfully, False otherwise
-        """
+        """Load the secondary (1.5B) model."""
         return self._load_model("secondary", SECONDARY_MODEL_PATH)
-    
+
     def _load_model(self, model_type: ModelType, model_path: Path) -> bool:
-        """
-        Internal method to load a model.
-        
-        Args:
-            model_type: "primary" or "secondary"
-            model_path: Path to model file
-            
-        Returns:
-            True if loaded successfully
-        """
+        """Internal method to load a model."""
         try:
             info(f"Loading {model_type} model: {model_path.name}")
-            
+
             # Check if model file exists
             if not model_path.exists():
                 error(f"Model file not found: {model_path}")
                 self._load_failures += 1
                 return False
-            
-            # Import llama_cpp here to avoid dependency issues when not needed
-            try:
-                from llama_cpp import Llama
-            except ImportError:
-                error("llama-cpp-python not installed. Run: pip install llama-cpp-python")
+
+            # Check if llama-server binary exists
+            llama_bin = Path(LLAMA_SERVER_BIN)
+            if not llama_bin.exists():
+                error(f"llama-server not found: {LLAMA_SERVER_BIN}")
                 self._load_failures += 1
                 return False
-            
-            # Unload current model if loaded
-            if self._model_instance is not None:
+
+            # Unload current model if different
+            if self._loaded_model != model_type:
                 self.unload()
-            
-            # Load new model
-            self._model_instance = Llama(
-                model_path=str(model_path),
-                n_ctx=MODEL_CONFIG["n_ctx"],
-                n_threads=MODEL_CONFIG["n_threads"],
-                n_gpu_layers=MODEL_CONFIG["n_gpu_layers"],
-                verbose=MODEL_CONFIG["verbose"],
-            )
-            
+
+            # Start new server
+            self._server = LlamaServer(model_path, model_type)
+            if not self._server.start():
+                self._load_failures += 1
+                return False
+
             self._loaded_model = model_type
             self._loaded_at = time.time()
-            
+
             success(f"Loaded {model_type} model ({model_path.name})")
             return True
-            
+
         except Exception as e:
             error(f"Failed to load {model_type} model: {e}")
             self._load_failures += 1
             return False
-    
+
     def unload(self):
         """Unload the current model."""
-        if self._model_instance is not None:
+        if self._server:
             info(f"Unloading {self._loaded_model} model")
-            del self._model_instance
-            self._model_instance = None
+            self._server.stop()
+            self._server = None
             self._loaded_model = None
             success("Model unloaded")
-    
+
     def ensure_model(self, model_type: ModelType) -> bool:
-        """
-        Ensure a specific model is loaded.
-        
-        If different model is loaded, unloads and loads the requested one.
-        
-        Args:
-            model_type: "primary" or "secondary"
-            
-        Returns:
-            True if model is loaded (or was already loaded)
-        """
-        if self._loaded_model == model_type:
+        """Ensure a specific model is loaded."""
+        if self._loaded_model == model_type and self._server and self._server.is_running():
             return True
-        
+
         if model_type == "primary":
             return self.load_primary()
         else:
             return self.load_secondary()
-    
+
     def get_loaded_model(self) -> Optional[ModelType]:
         """Get the currently loaded model type."""
         return self._loaded_model
-    
+
     def is_loaded(self, model_type: ModelType = None) -> bool:
         """Check if a model is loaded (optionally check specific type)."""
         if model_type is None:
             return self._loaded_model is not None
         return self._loaded_model == model_type
-    
-    def get_model_instance(self) -> Optional[object]:
-        """Get the llama_cpp model instance."""
-        return self._model_instance
-    
+
+    def get_model_instance(self) -> Optional[LlamaServer]:
+        """Get the llama-server instance."""
+        return self._server
+
     def get_load_failures(self) -> int:
         """Get count of consecutive load failures."""
         return self._load_failures
-    
+
     def reset_failures(self):
         """Reset failure count (call after successful load)."""
         self._load_failures = 0
-    
+
     def get_status(self) -> dict:
         """Get loader status."""
         return {
@@ -164,6 +333,7 @@ class ModelLoader:
             "loaded_at": self._loaded_at,
             "uptime_seconds": time.time() - self._loaded_at if self._loaded_at else 0,
             "load_failures": self._load_failures,
+            "server_running": self._server.is_running() if self._server else False,
         }
 
 
@@ -183,4 +353,5 @@ def reset_loader():
     """Reset the global loader (for testing)."""
     global _loader
     if _loader:
+        _loader.unload()
         _loader = None

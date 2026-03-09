@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Error Recovery for Codey v2.
+Error Recovery for Codey-v2.
 
 Strategy switching on failures:
 - write_file fails → try patch_file
@@ -384,11 +384,125 @@ def reset_switcher():
 def recover_from_error(error_message: str) -> Optional[FallbackStrategy]:
     """
     Convenience function to get fallback for an error.
-    
+
     Args:
         error_message: Error message to recover from
-        
+
     Returns:
         Suggested fallback strategy
     """
     return get_switcher().get_fallback(error_message=error_message)
+
+
+def execute_strategy(strategy: FallbackStrategy, context: dict) -> str:
+    """
+    Execute a recovery strategy.
+
+    Args:
+        strategy: The strategy to execute.
+        context: Dict with optional keys:
+            - "error_message": original error string
+            - "tool_name": the tool that failed
+            - "tool_args": args passed to the tool
+            - "file_path": path being operated on
+
+    Returns:
+        A result string describing what was done.
+    """
+    import re
+    import subprocess
+
+    action = strategy.action
+    error_msg = context.get("error_message", "")
+    file_path = context.get("file_path", "")
+
+    # ---- pip_install: extract package from ImportError and install ----
+    if action == "pip_install":
+        # Try to extract package name from error like "No module named 'foo'"
+        m = re.search(r"No module named ['\"]([^'\"]+)['\"]", error_msg)
+        pkg = m.group(1).split(".")[0] if m else None
+        if pkg:
+            try:
+                result = subprocess.run(
+                    ["pip", "install", pkg],
+                    capture_output=True, text=True, timeout=60,
+                )
+                if result.returncode == 0:
+                    info(f"Recovery: installed '{pkg}' successfully")
+                    return f"Installed {pkg}: {result.stdout.strip()[:200]}"
+                else:
+                    return f"pip install {pkg} failed: {result.stderr.strip()[:200]}"
+            except Exception as e:
+                return f"pip install error: {e}"
+        return "Recovery: could not determine package name from error"
+
+    # ---- search_files: search for similar files when file not found ----
+    elif action in ("search_files", "create_then_modify"):
+        if file_path:
+            from pathlib import Path
+            name = Path(file_path).name
+            try:
+                result = subprocess.run(
+                    ["find", ".", "-name", name],
+                    capture_output=True, text=True, timeout=10,
+                )
+                found = result.stdout.strip()
+                if found:
+                    return f"Found similar files:\n{found[:500]}"
+                return f"No files named '{name}' found in project"
+            except Exception as e:
+                return f"Search failed: {e}"
+        return "Recovery: no file path in context to search for"
+
+    # ---- mkdir_then_write: create parent dirs before writing ----
+    elif action == "mkdir_then_write":
+        if file_path:
+            from pathlib import Path
+            try:
+                parent = Path(file_path).parent
+                parent.mkdir(parents=True, exist_ok=True)
+                return f"Created parent directory: {parent}"
+            except Exception as e:
+                return f"mkdir failed: {e}"
+        return "Recovery: no file path in context"
+
+    # ---- verify_dependencies / check_and_fix_permissions ----
+    elif action in ("verify_dependencies", "check_and_fix_permissions"):
+        # Extract command name from shell error
+        m = re.search(r"'([^']+)': command not found", error_msg)
+        cmd = m.group(1) if m else None
+        if cmd:
+            try:
+                result = subprocess.run(
+                    ["which", cmd], capture_output=True, text=True, timeout=5
+                )
+                if result.returncode == 0:
+                    return f"'{cmd}' found at: {result.stdout.strip()}"
+                return f"'{cmd}' not found — install it first"
+            except Exception as e:
+                return f"which {cmd} failed: {e}"
+        return "Recovery: could not determine missing dependency"
+
+    # ---- search_error_message: return trimmed error for model context ----
+    elif action == "search_error_message":
+        return f"Error context for debugging:\n{error_msg[:500]}"
+
+    # ---- run_single_test: isolate a failing pytest test ----
+    elif action == "run_single_test":
+        m = re.search(r"FAILED\s+([\w/]+\.py::[\w]+)", error_msg)
+        if m:
+            test_id = m.group(1)
+            try:
+                result = subprocess.run(
+                    ["python", "-m", "pytest", test_id, "-v", "--tb=short"],
+                    capture_output=True, text=True, timeout=60,
+                )
+                out = (result.stdout + result.stderr).strip()
+                return f"Single test result:\n{out[:800]}"
+            except Exception as e:
+                return f"pytest failed: {e}"
+        return "Recovery: could not identify specific failing test"
+
+    # ---- log_and_continue / fallback ----
+    else:
+        return f"Recovery advisory ({strategy.name}): {strategy.description}"

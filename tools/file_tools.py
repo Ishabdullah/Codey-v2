@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-File tools for Codey v2.
+File tools for Codey-v2.
 
 Refactored for v2: Uses core/filesystem.Filesystem class for direct access.
 Confirmation logic moved to agent layer. No more PROTECTED_FILES block.

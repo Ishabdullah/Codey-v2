@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Background Task Execution for Codey v2.
+Background Task Execution for Codey-v2.
 
 Supports:
 - Async background tasks
@@ -40,6 +40,7 @@ class BackgroundTask:
     timeout: float = 1800  # 30 minutes default
     error: Optional[str] = None
     metadata: Dict = field(default_factory=dict)
+    _asyncio_task: Optional[asyncio.Task] = field(default=None, repr=False, compare=False)
     
     def is_running(self) -> bool:
         """Check if task is currently running."""
@@ -59,7 +60,7 @@ class BackgroundTask:
 
 class BackgroundTaskManager:
     """
-    Manages background tasks for Codey v2.
+    Manages background tasks for Codey-v2.
     
     Features:
     - Start/stop tasks
@@ -125,12 +126,12 @@ class BackgroundTaskManager:
         
         task.status = BackgroundTaskStatus.RUNNING
         task.started_at = time.time()
-        
+
         info(f"Background: starting task '{task.name}'")
-        
-        # Run task asynchronously
-        asyncio.create_task(self._run_task(task))
-        
+
+        # Store asyncio.Task handle so stop_task() can cancel it
+        task._asyncio_task = asyncio.create_task(self._run_task(task))
+
         return True
     
     async def _run_task(self, task: BackgroundTask):
@@ -183,10 +184,12 @@ class BackgroundTaskManager:
         
         task.status = BackgroundTaskStatus.STOPPING
         info(f"Background: stopping task '{task.name}'")
-        
-        # Note: Actual cancellation would require task cooperation
-        # For now, we just mark it as stopping
-        
+
+        # Cancel the underlying asyncio.Task — _run_task catches CancelledError
+        # and sets status to STOPPED with a timestamp.
+        if task._asyncio_task and not task._asyncio_task.done():
+            task._asyncio_task.cancel()
+
         return True
     
     def get_task(self, task_id: str) -> Optional[BackgroundTask]:

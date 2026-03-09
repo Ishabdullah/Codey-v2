@@ -1,8 +1,8 @@
-# Codey v2
+# Codey-v2
 
 **A persistent, daemon-like AI agent that lives on your device.**
 
-Codey v2 transforms Codey from a session-based CLI tool into a continuous AI agent—maintaining state, managing background tasks, and adapting to work without constant supervision. All while running locally on your Android device with dual-model hot-swap for thermal and memory efficiency.
+Codey-v2 transforms Codey-v2 from a session-based CLI tool into a continuous AI agent—maintaining state, managing background tasks, and adapting to work without constant supervision. All while running locally on your Android device with dual-model hot-swap for thermal and memory efficiency.
 
 ```
   ██████╗ ██████╗ ██████╗ ███████╗██╗   ██╗
@@ -138,7 +138,7 @@ cd ~/models/qwen2.5-1.5b
 wget https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q8_0.gguf
 ```
 
-### Step 4: Clone Codey v2
+### Step 4: Clone Codey-v2
 
 ```bash
 git clone https://github.com/Ishabdullah/Codey.git ~/codey-v2
@@ -212,7 +212,7 @@ codeyd2 status
 Output:
 ```
 ==================================================
-Codey v2 Status
+Codey-v2 Status
 ==================================================
 
 Version:  2.0.0
@@ -276,9 +276,9 @@ Tasks:
 ```json
 {
   "daemon": {
-    "pid_file": "~/.codey-v2/codey.pid",
-    "socket_file": "~/.codey-v2/codey.sock",
-    "log_file": "~/.codey-v2/codey.log",
+    "pid_file": "~/.codey-v2/codey-v2.pid",
+    "socket_file": "~/.codey-v2/codey-v2.sock",
+    "log_file": "~/.codey-v2/codey-v2.log",
     "log_level": "INFO"
   },
   "tasks": {
@@ -456,7 +456,7 @@ Error: "Failed to write file: permission denied"
 
 ## Thermal Management
 
-Codey v2 is optimized for mobile devices:
+Codey-v2 is optimized for mobile devices:
 
 | Threshold | Action |
 |-----------|--------|
@@ -662,10 +662,10 @@ status = state.get_full_status()
 
 ```bash
 # Check for stale PID file
-rm -f ~/.codey-v2/codey.pid
+rm -f ~/.codey-v2/codey-v2.pid
 
 # Check logs
-cat ~/.codey-v2/codey.log
+cat ~/.codey-v2/codey-v2.log
 
 # Restart
 ./codeyd2 restart
@@ -678,7 +678,7 @@ cat ~/.codey-v2/codey.log
 ./codeyd2 status
 
 # Check socket exists
-ls -la ~/.codey-v2/codey.sock
+ls -la ~/.codey-v2/codey-v2.sock
 ```
 
 ### Model Not Found

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Task executor for Codey v2 daemon.
+Task executor for Codey-v2 daemon.
 
 Executes queued tasks using the existing agent infrastructure.
 Runs in the background as part of the daemon event loop.
@@ -15,12 +15,12 @@ from utils.logger import info, warning, error, success, debug
 from utils.config import AGENT_CONFIG
 from core.state import StateStore
 from core.daemon_config import DaemonConfig
-from core.recovery import get_switcher, ErrorType
+from core.recovery import get_switcher, ErrorType, execute_strategy
 from core.thermal import start_inference, end_inference
 
 # Import agent components for task execution
 # We'll use a simplified execution path that doesn't require full REPL
-from core.inference import infer
+from core.inference_v2 import infer
 from core.context import build_file_context_block, auto_load_from_prompt
 from core.project import get_project_summary
 from core.codeymd import read_codeymd, find_codeymd
@@ -206,8 +206,12 @@ class TaskExecutor:
             
             debug(f"Step {step}: Running inference")
 
-            # Run inference
-            response = infer(messages, stream=False)
+            # Run inference in a thread so the asyncio event loop stays
+            # responsive during the blocking HTTP call to llama-server.
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None, lambda: infer(messages, stream=False)
+            )
             
             debug(f"Step {step}: Got response ({len(response)} chars)")
 
@@ -253,16 +257,26 @@ class TaskExecutor:
                     
                     if fallback:
                         info(f"Recovery: Trying {fallback.name} - {fallback.description}")
-                        # Record the error for learning
+                        # Execute the strategy (not advisory — actually runs)
+                        recovery_result = execute_strategy(fallback, {
+                            "error_message": str(e),
+                            "tool_name": tool_name,
+                            "tool_args": tool_args,
+                            "file_path": tool_args.get("path", "") if isinstance(tool_args, dict) else "",
+                        })
+                        recovery_ok = not recovery_result.startswith("Recovery: could not") and \
+                                      "failed" not in recovery_result.lower()
                         switcher.record_error(
                             switcher.classify_error(str(e)),
                             str(e),
                             fallback.name,
-                            success=False  # Will be updated if retry succeeds
+                            success=recovery_ok,
                         )
-                    
-                    messages.append({"role": "assistant", "content": response})
-                    messages.append({"role": "user", "content": f"Tool error: {e}. Recovery suggestion: {fallback.name if fallback else 'manual review'}"})
+                        messages.append({"role": "assistant", "content": response})
+                        messages.append({"role": "user", "content": f"Tool error: {e}\nRecovery ({fallback.name}) result: {recovery_result}\nRetry or adjust your approach."})
+                    else:
+                        messages.append({"role": "assistant", "content": response})
+                        messages.append({"role": "user", "content": f"Tool error: {e}. Try a different approach."})
             else:
                 messages.append({"role": "assistant", "content": response})
                 messages.append({"role": "user", "content": f"Unknown tool: {tool_name}"})
@@ -321,15 +335,34 @@ class TaskExecutor:
         return text.strip()
     
     def _confirm_write(self, path: str, content: str) -> str:
-        """Confirm and execute file write (daemon mode - auto-confirm)."""
+        """Execute file write in daemon mode (workspace boundary enforced by Filesystem)."""
         from tools.file_tools import tool_write_file
-        # In daemon mode, we auto-confirm writes
         return tool_write_file(path, content)
-    
+
     def _confirm_shell(self, command: str) -> str:
-        """Confirm and execute shell command (daemon mode - auto-confirm)."""
-        # In daemon mode, we auto-confirm shell commands
-        return shell(command)
+        """
+        Execute shell command in daemon mode.
+
+        Only explicitly safe command prefixes are allowed. Dangerous operations
+        (rm, dd, chmod, curl piped to sh, etc.) are blocked — daemon has no
+        stdin to prompt the user.
+        """
+        DAEMON_ALLOWED_PREFIXES = (
+            "python", "python3", "pip", "pip3",
+            "pytest", "ls", "cat", "echo", "grep", "find",
+            "git status", "git log", "git diff", "git show",
+            "cd ", "pwd", "which", "env", "printenv",
+        )
+        cmd_stripped = command.strip()
+        allowed = any(cmd_stripped.startswith(p) for p in DAEMON_ALLOWED_PREFIXES)
+        if not allowed:
+            warning(f"Daemon: blocking shell command not in allowlist: {cmd_stripped[:80]}")
+            return (
+                f"[BLOCKED] Daemon mode will not run '{cmd_stripped[:60]}' without explicit "
+                "user confirmation. Add the command prefix to DAEMON_ALLOWED_PREFIXES in "
+                "core/task_executor.py to enable it."
+            )
+        return shell(command, yolo=True)
     
     def get_current_task(self) -> Optional[Dict]:
         """Get the currently executing task."""

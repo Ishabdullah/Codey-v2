@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 #
-# codey2 - Codey v2 CLI Client
+# codey2 - Codey-v2 CLI Client
 #
 # If daemon is running, connects via Unix socket.
 # Otherwise, spawns direct mode.
@@ -8,8 +8,8 @@
 
 CODEY_V2_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 DAEMON_DIR="$HOME/.codey-v2"
-PID_FILE="$DAEMON_DIR/codey.pid"
-SOCKET_FILE="$DAEMON_DIR/codey.sock"
+PID_FILE="$DAEMON_DIR/codey-v2.pid"
+SOCKET_FILE="$DAEMON_DIR/codey-v2.sock"
 
 # Ensure daemon directory exists
 mkdir -p "$DAEMON_DIR"
@@ -181,7 +181,7 @@ try:
     health = send_command("health", {})
     
     # Format output
-    print("Codey v2 Daemon Status")
+    print("Codey-v2 Daemon Status")
     print("=" * 40)
     print(f"PID:            {health.get('pid', 'N/A')}")
     print(f"Status:         Running")
@@ -212,7 +212,7 @@ PYEOF
         rm -f "$TMPSCRIPT"
         exit $EXIT_CODE
     else
-        echo "Codey v2 daemon is not running"
+        echo "Codey-v2 daemon is not running"
         echo "Use 'codeyd2 start' to start the daemon"
         exit 1
     fi
@@ -221,7 +221,7 @@ fi
 # Check for status command (full observability status)
 if [ "$1" = "status" ]; then
     if ! is_daemon_running; then
-        echo "Codey v2 daemon is not running"
+        echo "Codey-v2 daemon is not running"
         exit 1
     fi
     
@@ -237,7 +237,7 @@ state = get_state()
 status = state.get_full_status()
 
 print("=" * 50)
-print("Codey v2 Status")
+print("Codey-v2 Status")
 print("=" * 50)
 print()
 print(f"Version:  {status['version']}")
@@ -273,7 +273,7 @@ fi
 # Check for task command
 if [ "$1" = "task" ]; then
     if ! is_daemon_running; then
-        echo "Codey v2 daemon is not running"
+        echo "Codey-v2 daemon is not running"
         exit 1
     fi
     
@@ -370,7 +370,7 @@ fi
 # Check for cancel command
 if [ "$1" = "cancel" ]; then
     if ! is_daemon_running; then
-        echo "Codey v2 daemon is not running"
+        echo "Codey-v2 daemon is not running"
         exit 1
     fi
     
@@ -417,28 +417,36 @@ PYEOF
     exit $?
 fi
 
-# Check if daemon is running
-if is_daemon_running; then
-    # Daemon mode: send command via socket
-    if [ $# -gt 0 ]; then
-        # Has arguments, send as prompt
-        YOLO="False"
-        for arg in "$@"; do
-            if [ "$arg" = "--yolo" ]; then
-                YOLO="True"
-            fi
-        done
-
-        PROMPT="$*"
-        send_to_daemon "$PROMPT" "$YOLO"
-    else
-        # No arguments, show brief status
-        echo "Codey v2 daemon is running"
-        echo "Use 'codey2 status' for details"
-        echo "Use 'codey2 \"prompt\"' to send a command"
+# Detect --bg / --background flag to opt into daemon background queuing.
+# All other prompts always run interactively via direct Python (even when
+# the daemon is running) so the user gets a real-time streamed response.
+BG_MODE="false"
+for arg in "$@"; do
+    if [ "$arg" = "--bg" ] || [ "$arg" = "--background" ]; then
+        BG_MODE="true"
+        break
     fi
+done
+
+if [ "$BG_MODE" = "true" ]; then
+    # Background mode: queue task in the running daemon
+    if ! is_daemon_running; then
+        echo "Error: Daemon is not running. Start it with: codeyd2 start"
+        exit 1
+    fi
+    YOLO="False"
+    PROMPT_PARTS=()
+    for arg in "$@"; do
+        if [ "$arg" = "--yolo" ]; then
+            YOLO="True"
+        elif [ "$arg" != "--bg" ] && [ "$arg" != "--background" ]; then
+            PROMPT_PARTS+=("$arg")
+        fi
+    done
+    send_to_daemon "${PROMPT_PARTS[*]}" "$YOLO"
 else
-    # Direct mode: spawn Python directly
+    # Direct mode: always spawn Python interactively (foreground, streamed output).
+    # Daemon running or not — interactive prompts never go to the socket.
     TMPSCRIPT="$(mktemp "$DAEMON_DIR/run_XXXX.py")"
 
     cat > "$TMPSCRIPT" << PYEOF
@@ -448,6 +456,6 @@ from main import main
 main()
 PYEOF
 
-    python3 "$TMPSCRIPT" "\$@"
+    python3 "$TMPSCRIPT" "$@"
     rm -f "$TMPSCRIPT"
 fi

@@ -6,7 +6,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 from utils.logger import console, info, success, error, warning, separator
 from utils.config import CODEY_VERSION
-from core.loader import load_model
+from core.loader_v2 import get_loader
+from core.inference_v2 import infer
 from core.agent import run_agent
 from core import context as ctx
 
@@ -22,7 +23,7 @@ BANNER = f"""[bold green]
 
 def parse_args():
     import argparse
-    parser = argparse.ArgumentParser(description="Codey - Local AI coding assistant")
+    parser = argparse.ArgumentParser(description="Codey-v2 - Local AI coding assistant")
     parser.add_argument("prompt",       nargs="?")
     parser.add_argument("--yolo",       action="store_true", help="Skip confirmations")
     parser.add_argument("--threads",    type=int)
@@ -39,6 +40,7 @@ def parse_args():
     parser.add_argument("--plan", action="store_true", help="Enable plan mode for complex tasks")
     parser.add_argument("--no-plan", action="store_true", help="Disable orchestration/planning for complex tasks")
     parser.add_argument("--daemon",     action="store_true", help="Run in daemon mode (v2 feature)")
+    parser.add_argument("--no-resume",  action="store_true", help="Start fresh, ignore saved session")
     return parser.parse_args()
 
 def apply_overrides(args):
@@ -54,19 +56,19 @@ def apply_overrides(args):
 
 def shutdown():
     try:
-        from core.inference import stop_server
-        stop_server()
+        from core.inference_v2 import infer as infer_v2
+        # stop_server is not needed in v2 - models are managed by loader_v2
     except Exception:
         pass
 
 def run_init():
     from core.project import detect_project
     from core.codeymd import get_init_prompt, write_codeymd, find_codeymd
-    from core.inference import infer
+    from core.inference_v2 import infer
     existing = find_codeymd()
     if existing:
         warning(f"CODEY.md already exists at {existing}")
-        ans = input("Overwrite? [y/N]: ").strip().lower()
+        ans = console.input("Overwrite? [y/N]: ").strip().lower()
         if ans not in ("y", "yes"):
             info("Aborted.")
             return
@@ -163,7 +165,6 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
         else:
             query_parts = parts[1].rsplit(maxsplit=1)
             # Only treat last arg as path if it looks like a path (starts with . / ~ or is a dir)
-            import os
             if len(query_parts) > 1 and (
                 query_parts[-1].startswith((".", "/", "~")) or
                 os.path.isdir(query_parts[-1])
@@ -302,9 +303,21 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
         if len(parts) > 1:
             try:
                 os.chdir(parts[1])
+                new_cwd = os.getcwd()
+                # Update WORKSPACE_ROOT so Filesystem boundary checks use new dir
+                import utils.config as _cfg
+                from pathlib import Path as _Path
+                _cfg.WORKSPACE_ROOT = _Path(new_cwd).resolve()
+                # Reset Filesystem singleton so next tool call picks up new workspace
+                from core.filesystem import reset_filesystem
+                reset_filesystem()
+                # Invalidate project cache (repo map, project type)
                 from core.project import invalidate_cache
                 invalidate_cache()
-                success(f"Working directory: {os.getcwd()}")
+                # Invalidate .codeyignore pattern cache for old cwd
+                from core import context as _ctx
+                _ctx._ignore_cache.clear()
+                success(f"Working directory: {new_cwd}")
             except Exception as e:
                 error(str(e))
         else:
@@ -334,7 +347,7 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
   /unread <file>         Remove file from context
   /ignore <pattern>      Add pattern to .codeyignore
   /context               Show loaded files and sizes
-  /diff [file]           Show what Codey changed (colored diff)
+  /diff [file]           Show what Codey-v2 changed (colored diff)
   /undo [file]           Restore file to previous version
 
 [bold]Search:[/bold]
@@ -359,22 +372,24 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
   /exit                  Save session and quit
 
 [bold]CLI flags:[/bold]
-  codey "task"           One-shot
-  codey --chat "task"    Chat with prefilled prompt
-  codey --yolo "task"    Skip all confirmations
-  codey --fix file.py    Run file, auto-fix any errors
-  codey --read file.py   Pre-load file into context
-  codey --init           Generate CODEY.md and exit
-  codey --no-resume      Start fresh (ignore saved session)
+  codey-v2 "task"           One-shot
+  codey-v2 --chat "task"    Chat with prefilled prompt
+  codey-v2 --yolo "task"    Skip all confirmations
+  codey-v2 --fix file.py    Run file, auto-fix any errors
+  codey-v2 --read file.py   Pre-load file into context
+  codey-v2 --init           Generate CODEY.md and exit
+  codey-v2 --no-resume      Start fresh (ignore saved session)
         """)
         return True, history
 
     return False, history
 
-def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=False, no_plan=False, session_path=None):
+def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=False, no_plan=False, session_path=None, no_resume=False):
     console.print(BANNER)
     separator()
-    load_model()
+    # v2: Use loader_v2 to ensure model is available
+    loader = get_loader()
+    loader.load_primary()
 
     from core.project import detect_project
     from core.codeymd import find_codeymd
@@ -393,14 +408,20 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
     # Load saved session
     from core.sessions import load_session, save_session
     history = []
-    if session_path:
-        history = load_session(session_path)
-        if history:
-            info(f'Resumed session: {len(history)//2} turns')
+    if not no_resume:
+        if session_path:
+            history = load_session(path=session_path)
+        else:
+            history = load_session()  # auto-resume from cwd-based session file
 
     if initial_prompt and one_shot:
         try:
-            _, history = run_agent(initial_prompt, history, yolo=yolo, no_plan=no_plan)
+            response, history = run_agent(initial_prompt, history, yolo=yolo, no_plan=no_plan)
+            # Display the response for one-shot mode
+            if response and not response.startswith("["):
+                separator()
+                console.print(f"\n[bold green]Codey-v2:[/bold green] {response}")
+                separator()
             save_session(history)
         except KeyboardInterrupt:
             pass
@@ -413,7 +434,12 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
 
     if initial_prompt:
         try:
-            _, history = run_agent(initial_prompt, history, yolo=yolo, use_plan=plan, no_plan=no_plan)
+            response, history = run_agent(initial_prompt, history, yolo=yolo, use_plan=plan, no_plan=no_plan)
+            # Display the response
+            if response and not response.startswith("["):
+                separator()
+                console.print(f"\n[bold green]Codey-v2:[/bold green] {response}")
+                separator()
             save_session(history)
         except KeyboardInterrupt:
             console.print("\n[dim]Interrupted.[/dim]")
@@ -428,6 +454,13 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
             console.print("\n[dim]Session saved. Goodbye![/dim]")
             shutdown()
             break
+        except Exception as e:
+            # Handle any terminal input errors gracefully
+            error(f"Input error: {e}")
+            save_session(history)
+            console.print("\n[dim]Session saved. Exiting...[/dim]")
+            shutdown()
+            break
 
         if not user_input:
             continue
@@ -437,28 +470,41 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
             continue
 
         try:
-            _, history = run_agent(user_input, history, yolo=yolo, use_plan=plan, no_plan=no_plan)
+            response, history = run_agent(user_input, history, yolo=yolo, use_plan=plan, no_plan=no_plan)
+            # Display the response if it's not a tool execution result
+            if response and not response.startswith("["):
+                separator()
+                console.print(f"\n[bold green]Codey-v2:[/bold green] {response}")
+                separator()
             save_session(history)
         except KeyboardInterrupt:
             console.print("\n[dim]Interrupted.[/dim]")
+        except SystemExit:
+            # Allow clean exit
+            raise
         except Exception as e:
             error(f"Agent error: {e}")
             import traceback
             traceback.print_exc()
+            # Continue the REPL even after errors
+            console.print("\n[dim]An error occurred. You can continue chatting.[/dim]")
 
 def main():
     args = parse_args()
 
     if args.version:
-        print(f"Codey v{CODEY_VERSION}")
+        print(f"Codey-v2 v{CODEY_VERSION}")
         sys.exit(0)
 
     apply_overrides(args)
 
     # Daemon mode (v2 feature)
     if args.daemon:
-        info("Starting Codey v2 daemon mode...")
-        from core.daemon import Daemon
+        from core.daemon import Daemon, check_pid_file
+        if check_pid_file():
+            error("Daemon is already running. Use --daemon-stop to shut it down.")
+            sys.exit(1)
+        info("Starting Codey-v2 daemon mode...")
         daemon = Daemon()
         daemon.run()
         return
@@ -469,20 +515,22 @@ def main():
         return
 
     if args.init:
-        load_model()
+        loader = get_loader()
+        loader.load_primary()
         run_init()
         shutdown()
         return
 
     if args.tdd:
-        load_model()
+        loader = get_loader()
+        loader.load_primary()
         from core.tdd import run_tdd_loop, find_test_file
         test_file = args.tests or find_test_file(args.tdd)
         if not test_file:
             # Suggest test file name
             from pathlib import Path as _P
             suggested = "test_" + _P(args.tdd).name
-            error(f"No test file found. Create {suggested} or use: codey --tdd {args.tdd} --tests {suggested}")
+            error(f"No test file found. Create {suggested} or use: codey-v2 --tdd {args.tdd} --tests {suggested}")
             shutdown()
             return
         run_tdd_loop(args.tdd, test_file, yolo=args.yolo)
@@ -490,7 +538,8 @@ def main():
         return
 
     if args.fix:
-        load_model()
+        loader = get_loader()
+        loader.load_primary()
         from core.fixmode import fix_file
         # --fix is automated, always disable confirmations
         from utils import config
@@ -518,6 +567,7 @@ def main():
         session_path=resolved_session,
         plan=args.plan,
         no_plan=args.no_plan,
+        no_resume=args.no_resume,
     )
 
 if __name__ == "__main__":

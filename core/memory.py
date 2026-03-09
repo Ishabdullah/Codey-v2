@@ -128,7 +128,7 @@ class MemoryManager:
         """Compress old history turns into summary using inference."""
         if len(history) < 8:
             return history
-        from core.inference import infer
+        from core.inference_v2 import infer
         old_turns = history[:-4]  # keep last 2 pairs fresh
         fresh_turns = history[-4:]
         text = '\n'.join(

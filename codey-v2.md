@@ -1,10 +1,10 @@
-# Codey v2 — Implementation Plan
+# Codey-v2 — Implementation Plan
 
 ## Overview
 
-Codey v2 transforms Codey from a session-based CLI tool into a **persistent, daemon-like AI agent** that lives on your device. Instead of being "run" for each task, Codey v2 exists continuously—maintaining state, managing background processes, and adapting to work without constant supervision.
+Codey-v2 transforms Codey-v2 from a session-based CLI tool into a **persistent, daemon-like AI agent** that lives on your device. Instead of being "run" for each task, Codey-v2 exists continuously—maintaining state, managing background processes, and adapting to work without constant supervision.
 
-The key difference from current Codey: **persistence over invocation**. Current Codey is a tool you run. Codey v2 is an agent that exists. It has a native "body" (daemon process), direct filesystem access (no tool-call parsing), internal planning (not model-asked orchestration), hierarchical memory (working/project/long-term/episodic), self-modification capability (with checkpointing), and observability into its own state. All while running locally on an S24 Ultra with dual-model hot-swap (7B primary, 1.5B secondary) for thermal and memory efficiency.
+The key difference from current Codey-v2: **persistence over invocation**. Current Codey-v2 is a tool you run. Codey-v2 is an agent that exists. It has a native "body" (daemon process), direct filesystem access (no tool-call parsing), internal planning (not model-asked orchestration), hierarchical memory (working/project/long-term/episodic), self-modification capability (with checkpointing), and observability into its own state. All while running locally on an S24 Ultra with dual-model hot-swap (7B primary, 1.5B secondary) for thermal and memory efficiency.
 
 ---
 
@@ -12,13 +12,13 @@ The key difference from current Codey: **persistence over invocation**. Current 
 
 ```
 ┌─────────────────────────────────────────────────────────────────┐
-│                      CLI Client (codey)                         │
+│                      CLI Client (codey-v2)                      │
 │  ── User commands, flags, REPL interface                        │
 └─────────────────────────────────────────────────────────────────┘
                               │
                               ▼
 ┌─────────────────────────────────────────────────────────────────┐
-│                      Daemon Core (codeyd)                       │
+│                      Daemon Core (codeyd2)                      │
 │  ── Main event loop, signal handlers, PID file, Unix socket     │
 │  ── Receives commands from CLI or scheduled tasks               │
 └─────────────────────────────────────────────────────────────────┘
@@ -76,7 +76,7 @@ The key difference from current Codey: **persistence over invocation**. Current 
 
 **Key Decisions/Tradeoffs:**
 - Unix socket over TCP: Faster, no port conflicts, local-only security
-- PID file in `~/.codey/codey.pid`: Standard daemon pattern, easy cleanup
+- PID file in `~/.codey-v2/codey-v2.pid`: Standard daemon pattern, easy cleanup
 - SIGUSR1 for hot reload (config changes without restart)
 - SIGTERM for graceful shutdown (complete current task, save state)
 - Tradeoff: Daemon consumes ~200MB RAM idle vs. 0MB when not in use
@@ -156,7 +156,7 @@ The key difference from current Codey: **persistence over invocation**. Current 
 
 **Key Decisions/Tradeoffs:**
 - Checkpoint before any write to `core/`, `tools/`, `utils/`
-- Checkpoint = git commit + full file backup in `~/.codey/checkpoints/`
+- Checkpoint = git commit + full file backup in `~/.codey-v2/checkpoints/`
 - Rollback via `codey rollback <checkpoint_id>`
 - Tradeoff: Checkpoints add ~50-100MB per self-modification event
 
@@ -323,9 +323,9 @@ CREATE TABLE episodic_log (
 ```json
 {
   "daemon": {
-    "pid_file": "~/.codey-v2/codey.pid",
-    "socket_file": "~/.codey-v2/codey.sock",
-    "log_file": "~/.codey-v2/codey.log",
+    "pid_file": "~/.codey-v2/codey-v2.pid",
+    "socket_file": "~/.codey-v2/codey-v2.sock",
+    "log_file": "~/.codey-v2/codey-v2.log",
     "log_level": "INFO"
   },
   "tasks": {
@@ -951,7 +951,7 @@ status = thermal.get_status()
 
 ### Phase 3 Tasks — ✅ COMPLETE
 
-- [x] **Download secondary model**: `wget https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q8_0.gguf -P ~/codey/model/`
+- [x] **Download secondary model**: `wget https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q8_0.gguf -P ~/codey-v2/model/`
 - [x] **Modify `utils/config.py`**: Add `SECONDARY_MODEL_PATH`, `ROUTER_CONFIG` with routing thresholds.
 - [x] **Create `core/loader_v2.py`**: `ModelLoader` class with `load_primary()`, `load_secondary()`, `unload()`, `get_loaded_model()`. Track loaded model state.
 - [x] **Create `core/router.py`**: `route_task(user_input)` heuristic. <50 chars + simple keywords → secondary, else primary. 30-second cooldown.
@@ -1093,7 +1093,7 @@ def check_pid_file():
 1. **Memory usage**: If daemon RSS > 1GB, log warning. If > 1.5GB, trigger GC + evict working memory.
 2. **Task queue stuck**: If task status = "running" for >30 min, mark failed, log error.
 3. **Model load failures**: If model fails to load 3x consecutively, disable hot-swap, use primary only.
-4. **Disk space**: If `~/.codey/` > 5GB, prune old checkpoints (keep last 5).
+4. **Disk space**: If `~/.codey-v2/` > 5GB, prune old checkpoints (keep last 5).
 
 **Implementation:**
 ```python
@@ -1131,7 +1131,7 @@ These are nice-to-have improvements explicitly **not** in the initial implementa
 
 ## Summary
 
-Codey v2 is a **persistent, daemon-like AI agent** with:
+Codey-v2 is a **persistent, daemon-like AI agent** with:
 - **Daemon core** (Unix socket, PID file, signal handlers)
 - **Direct filesystem access** (no JSON tool parsing)
 - **Internal planning** (native task queue, not model-asked)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Direct filesystem access for Codey v2.
+Direct filesystem access for Codey-v2.
 
 Provides a class-based interface for file operations:
 - read(path) - Read file content
@@ -19,6 +19,7 @@ from typing import List, Optional, Union
 
 from utils.logger import info, warning, error, success
 from utils.config import WORKSPACE_ROOT, CODE_DIR
+from core.filehistory import snapshot as _snapshot
 
 
 class FilesystemAccessError(Exception):
@@ -28,7 +29,7 @@ class FilesystemAccessError(Exception):
 
 class Filesystem:
     """
-    Direct filesystem access for Codey v2 agent.
+    Direct filesystem access for Codey-v2 agent.
     
     Provides safe file operations with:
     - Path validation (no access outside workspace)
@@ -109,7 +110,11 @@ class Filesystem:
                 raise FilesystemAccessError(f"Not a file: {path}")
             
             content = path.read_text(encoding='utf-8')
-            info(f"Read {path.relative_to(self.workspace)} ({len(content)} chars)")
+            try:
+                rel = path.relative_to(self.workspace)
+            except ValueError:
+                rel = path
+            info(f"Read {rel} ({len(content)} chars)")
             return content
             
         except FilesystemAccessError:
@@ -147,11 +152,19 @@ class Filesystem:
             
             # Create parent directories
             path.parent.mkdir(parents=True, exist_ok=True)
-            
+
+            # Snapshot existing file so /undo works for write_file too
+            if path.exists():
+                _snapshot(str(path))
+
             # Write content
             path.write_text(content, encoding='utf-8')
-            
-            msg = f"Written {path.relative_to(self.workspace)}"
+
+            try:
+                rel = path.relative_to(self.workspace)
+            except ValueError:
+                rel = path
+            msg = f"Written {rel}"
             success(msg)
             return msg
             
@@ -202,8 +215,12 @@ class Filesystem:
             
             # Write new content
             path.write_text(new_content, encoding='utf-8')
-            
-            msg = f"Patched {path.relative_to(self.workspace)}"
+
+            try:
+                rel = path.relative_to(self.workspace)
+            except ValueError:
+                rel = path
+            msg = f"Patched {rel}"
             success(msg)
             return diff
             
@@ -233,13 +250,21 @@ class Filesystem:
             if not path.exists():
                 path.parent.mkdir(parents=True, exist_ok=True)
                 path.write_text(content, encoding='utf-8')
-                return f"Created {path.relative_to(self.workspace)}"
-            
+                try:
+                    rel = path.relative_to(self.workspace)
+                except ValueError:
+                    rel = path
+                return f"Created {rel}"
+
             # Append to existing file
             with open(path, 'a', encoding='utf-8') as f:
                 f.write(content)
-            
-            msg = f"Appended to {path.relative_to(self.workspace)}"
+
+            try:
+                rel = path.relative_to(self.workspace)
+            except ValueError:
+                rel = path
+            msg = f"Appended to {rel}"
             success(msg)
             return msg
             
@@ -317,8 +342,12 @@ class Filesystem:
             
             entries = [e.name for e in path.iterdir()]
             entries.sort()
-            
-            info(f"Listed {path.relative_to(self.workspace)} ({len(entries)} entries)")
+
+            try:
+                rel = path.relative_to(self.workspace)
+            except ValueError:
+                rel = path
+            info(f"Listed {rel} ({len(entries)} entries)")
             return entries
             
         except FilesystemAccessError:

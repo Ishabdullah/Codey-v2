@@ -1,4 +1,4 @@
-Codey v0.9.x → v1.0.0 Task List
+Codey-v2 v0.9.x → v1.0.0 Task List
 
 🔴 P1 — Stability (Do First, Highest Impact)
 1. Fix brittle JSON parser (core/agent.py lines 60-90) [DONE]
@@ -29,7 +29,7 @@ Codey v0.9.x → v1.0.0 Task List
    - llama-server path and model path into utils/config.py
    - Auto-detect via which llama-server fallback
 9. Auto-commit after successful tasks (/git enhancement) [DONE]
-   - After tests pass or task completes cleanly, offer git add -A && git commit -m "Codey: <task summary>"
+   - After tests pass or task completes cleanly, offer git add -A && git commit -m "Codey-v2: <task summary>"
    - Already have /git command, just wire it to task completion
 10. Repo map (lightweight) [DONE]
     - On startup, scan project for def, class, import lines only (no full file content)

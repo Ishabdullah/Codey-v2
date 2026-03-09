@@ -2,7 +2,7 @@
 
 This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
 
-## Running Codey
+## Running Codey-v2
 
 ```bash
 # Interactive REPL
@@ -24,7 +24,7 @@ python main.py --read core/agent.py "refactor the tool loop"
 python main.py --threads 6 --ctx 8192
 ```
 
-The `codey` shell script in the repo root is just a launcher: `python ~/codey/main.py "$@"`.
+The `codey-v2` shell script in the repo root is just a launcher: `python ~/codey-v2/main.py "$@"`.
 
 No tests exist yet — `tests/` is planned but not implemented (see `todo.md`).
 
@@ -80,12 +80,12 @@ All tunable knobs are in `utils/config.py`:
 
 ### Safety boundaries
 
-- **Protected files** — `tools/file_tools.py::PROTECTED_FILES` lists Codey's own source files. The agent cannot overwrite them.
+- **Protected files** — `tools/file_tools.py::PROTECTED_FILES` lists Codey-v2's own source files. The agent cannot overwrite them.
 - **Workspace restriction** — reads/writes outside `WORKSPACE_ROOT` trigger a confirmation prompt.
 - **Shell confirmation** — dangerous commands (`rm`, `chmod`, `curl`, etc.) always confirm; all shell commands confirm unless `--yolo`.
 - **Secret redaction** — `core/sessions.py` strips API keys, GitHub tokens, and passwords before saving session history to `~/.codey_sessions/`.
 
-## Key Patterns When Modifying Codey
+## Key Patterns When Modifying Codey-v2
 
 **Adding a new tool**: Register it in `TOOLS` dict and `ROGUE_TAG_MAP` in `agent.py`, add to `SYSTEM_PROMPT` in `prompts/system_prompt.py`, and implement the handler in `tools/`.
 

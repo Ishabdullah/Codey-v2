@@ -1,6 +1,6 @@
 import json
 import re
-from core.inference import infer
+from core.inference_v2 import infer
 from core.context import build_file_context_block, auto_load_from_prompt, list_loaded
 from core.project import get_project_summary
 from core.codeymd import read_codeymd, find_codeymd
@@ -92,21 +92,14 @@ def extract_json(raw):
     else:
         candidate = raw[:end]
 
-    # Clean candidate for common LLM artifacts
-    # 1. Trailing commas
+    # Clean candidate for common LLM artifacts: trailing commas
     cleaned = re.sub(r',\s*([}\]])', r'\1', candidate)
-    # 2. Unescaped newlines inside strings (common in write_file content)
-    # This is tricky because we only want to escape newlines inside the quotes.
-    # We'll try to let the fallback regex handle this if json.loads fails.
 
-    for attempt in [
-        lambda s: json.loads(s),
-        lambda s: json.loads(cleaned),
-        # Final fallback: manual regex extraction for known keys
-    ]:
+    # Try raw candidate first, then cleaned version
+    for s in [candidate, cleaned]:
         try:
-            return attempt(candidate if attempt.__name__ == '<lambda>' else cleaned)
-        except Exception:
+            return json.loads(s)
+        except (json.JSONDecodeError, ValueError):
             pass
 
     # Final fallback: manual regex extraction for known keys
@@ -173,18 +166,25 @@ def execute_tool(tool_dict):
         return "[ERROR] " + str(e)
 
 def is_error(result, tool_name):
-    if tool_name != "shell":
+    if not isinstance(result, str):
         return False
-    if "[cancelled]" in result.lower():
+    result_lower = result.lower()
+    if "[cancelled]" in result_lower:
         return False
-    error_signals = [
-        "traceback", "syntaxerror", "nameerror", "typeerror",
-        "importerror", "modulenotfounderror", "indentationerror",
-        "attributeerror", "valueerror", "filenotfounderror",
-        "permissionerror", "error:", "exception:", "failed",
-        "command not found", "no such file",
-    ]
-    return any(s in result.lower() for s in error_signals)
+    # All tools: treat [ERROR] prefix as an error
+    if result.startswith("[ERROR]"):
+        return True
+    # Shell-specific: detect Python tracebacks and command failures
+    if tool_name == "shell":
+        error_signals = [
+            "traceback", "syntaxerror", "nameerror", "typeerror",
+            "importerror", "modulenotfounderror", "indentationerror",
+            "attributeerror", "valueerror", "filenotfounderror",
+            "permissionerror", "error:", "exception:", "failed",
+            "command not found", "no such file",
+        ]
+        return any(s in result_lower for s in error_signals)
+    return False
 
 def is_hallucination(response, user_message, tools_used):
     msg_lower = user_message.lower()
@@ -276,14 +276,14 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
     enriched = enrich_message(user_message)
     # Orchestrator — complex tasks get broken into subtask queue
     from core.orchestrator import is_complex, plan_tasks, run_queue
-    from core.display import show_task_plan
+    from core.display import show_task_plan, console
     if is_complex(user_message) and not _in_subtask and not no_plan:
         info("Planning subtasks...")
         queue = plan_tasks(user_message, read_codeymd())
         if len(queue.tasks) > 1:
             show_task_plan(queue)
             try:
-                ans = input("  Execute this plan? [Y/n]: ").strip().lower()
+                ans = console.input("  Execute this plan? [Y/n]: ").strip().lower()
             except (EOFError, KeyboardInterrupt):
                 ans = "n"
             if ans in ("n", "no"):
@@ -301,14 +301,18 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
         approved, enriched = show_and_confirm_plan(plan)
         if not approved:
             return "[Cancelled]", history
-    if should_summarize(history):
-        history = summarize_history(history)
     # Tick memory manager — evicts stale files, advances turn counter
     from core.memory import memory as _mem
     _mem.tick()
-    # Compress history if it's grown too long
+    # Compress/summarize history — use only one path per call to avoid double inference
     if len(history) >= 8:
         history = _mem.compress_summary(history)
+        # Trim to keep only the summary + recent turns in memory
+        keep = AGENT_CONFIG["history_turns"] * 2
+        if len(history) > keep:
+            history = history[-keep:]
+    elif should_summarize(history):
+        history = summarize_history(history)
     sys_prompt = build_system_prompt(user_message)
     messages = [{"role": "system", "content": sys_prompt}]
     
@@ -356,7 +360,7 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             warning("Context: " + usage_bar(used, total))
         else:
             info("Context: " + usage_bar(used, total))
-        response = infer(messages, stream=True, extra_stop=["</tool>"])
+        response = infer(messages, stream=True, extra_stop=["</tool>"], show_thinking=True)
         response = clean_response(response)
         tool_dict = parse_tool_call(response)
         if tool_dict:

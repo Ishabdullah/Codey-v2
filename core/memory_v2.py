@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Hierarchical Memory for Codey v2.
+Hierarchical Memory for Codey-v2.
 
 Four-tier memory system:
 1. Working Memory - Currently edited files (evicted after task)

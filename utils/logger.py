@@ -107,7 +107,7 @@ def confirm(question) -> bool:
     sys.stderr.flush()
     while True:
         try:
-            ans = input(f"\n⚠  {question} [y/N]: ").strip().lower()
+            ans = console.input(f"\n⚠  {question} [y/N]: ").strip().lower()
             if ans in ("y", "yes"):
                 return True
             if ans in ("n", "no", ""):

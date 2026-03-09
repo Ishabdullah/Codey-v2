@@ -9,28 +9,38 @@ from pathlib import Path
 from utils.logger import success, warning, info
 from core.memory import memory as _mem
 
-_loaded_files = {}  # kept for backward compat — mirrors _mem._files
+_DEFAULT_IGNORE = frozenset({
+    ".env", "*.pem", "*.key", ".git", "__pycache__",
+    ".pytest_cache", ".codey_sessions", "node_modules", ".venv"
+})
 
-def is_ignored(path):
-    """Check if a file should be ignored based on .codeyignore or defaults."""
-    p = Path(path).expanduser().resolve()
-    
-    # Defaults
-    ignore_patterns = {
-        ".env", "*.pem", "*.key", ".git", "__pycache__", 
-        ".pytest_cache", ".codey_sessions", "node_modules", ".venv"
-    }
-    
-    # Load .codeyignore if it exists
-    ignore_file = Path(os.getcwd()) / ".codeyignore"
+# Cache: { cwd_str: (mtime_or_None, frozenset_of_patterns) }
+_ignore_cache: dict = {}
+
+def _load_ignore_patterns(cwd: str) -> frozenset:
+    """Load and cache .codeyignore patterns for a given cwd."""
+    ignore_file = Path(cwd) / ".codeyignore"
+    mtime = ignore_file.stat().st_mtime if ignore_file.exists() else None
+    cached = _ignore_cache.get(cwd)
+    if cached and cached[0] == mtime:
+        return cached[1]
+    patterns = set(_DEFAULT_IGNORE)
     if ignore_file.exists():
         try:
             for line in ignore_file.read_text().splitlines():
                 line = line.strip()
                 if line and not line.startswith("#"):
-                    ignore_patterns.add(line)
+                    patterns.add(line)
         except Exception:
             pass
+    result = frozenset(patterns)
+    _ignore_cache[cwd] = (mtime, result)
+    return result
+
+def is_ignored(path):
+    """Check if a file should be ignored based on .codeyignore or defaults."""
+    p = Path(path).expanduser().resolve()
+    ignore_patterns = _load_ignore_patterns(os.getcwd())
             
     # Check filename and relative path
     name = p.name
@@ -65,8 +75,6 @@ def load_file(path):
         return f"[ERROR] File not found: {path}"
     try:
         content = p.read_text(encoding="utf-8", errors="replace")
-        key = str(p.resolve())
-        _loaded_files[key] = content
         _mem.load_file(str(p), content)
         success(f"Loaded: {p.name} ({len(content)} chars)")
         return content
@@ -116,14 +124,10 @@ def load_directory(path, extensions=None, max_files=10):
 
 def unload_file(path):
     p = Path(path).expanduser().resolve()
-    key = str(p)
-    if key in _loaded_files:
-        del _loaded_files[key]
     _mem.unload_file(str(p))
     info(f"Unloaded: {p.name}")
 
 def clear_context():
-    _loaded_files.clear()
     _mem.clear()
     info("File context cleared.")
 

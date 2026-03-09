@@ -12,30 +12,22 @@ from utils.logger import success, info, warning
 
 SESSIONS_DIR = Path.home() / ".codey_sessions"
 
-# Patterns for common secrets (API keys, etc.)
-SECRET_PATTERNS = [
-    r"(sk-[a-zA-Z0-9]{48})",                   # OpenAI
-    r"(ghp_[a-zA-Z0-9]{36})",                 # GitHub
-    r'("password":\s*)"([^"]+)"',             # JSON passwords
-    r'(password\s*=\s*)([^\s&]+)',            # Shell/Env passwords
-    r'(api[_-]key\s*[:=]\s*)([a-zA-Z0-9_-]{20,})', # Generic API key
+# Each entry: (compiled pattern, replacement string)
+# For key=value pairs use group \1 to keep the key, redact the value.
+_SECRET_PATTERNS = [
+    (re.compile(r"sk-[a-zA-Z0-9]{48}"),                    "[REDACTED]"),           # OpenAI key
+    (re.compile(r"ghp_[a-zA-Z0-9]{36}"),                   "[REDACTED]"),           # GitHub PAT
+    (re.compile(r'("password"\s*:\s*)"[^"]+"'),             r'\1"[REDACTED]"'),      # JSON password
+    (re.compile(r'(password\s*=\s*)\S+'),                   r'\1[REDACTED]'),        # env password
+    (re.compile(r'(api[_-]key\s*[:=]\s*)[a-zA-Z0-9_\-]{20,}', re.I), r'\1[REDACTED]'), # generic key
 ]
 
 def redact_secrets(text: str) -> str:
-    """Mask potential secrets in text."""
+    """Mask potential secrets in text before saving to disk."""
     if not isinstance(text, str):
         return text
-    for pattern in SECRET_PATTERNS:
-        # If it's a key-value pair, only mask the value
-        if "(" in pattern and ")" in pattern and "(?:" not in pattern:
-            # We assume the first capture group is the secret if it's the whole thing,
-            # or the second if it's a key-value.
-            if len(re.findall(r"(?<!\\)\(", pattern)) > 1:
-                text = re.sub(pattern, r"\1[REDACTED]", text)
-            else:
-                text = re.sub(pattern, "[REDACTED]", text)
-        else:
-            text = re.sub(pattern, "[REDACTED]", text)
+    for pattern, replacement in _SECRET_PATTERNS:
+        text = pattern.sub(replacement, text)
     return text
 
 def _session_path(project_dir: str = None) -> Path:
@@ -43,7 +35,7 @@ def _session_path(project_dir: str = None) -> Path:
     SESSIONS_DIR.mkdir(exist_ok=True)
     cwd = project_dir or os.getcwd()
     # Hash the path to make a safe filename
-    key = hashlib.md5(cwd.encode()).hexdigest()[:12]
+    key = hashlib.sha256(cwd.encode()).hexdigest()[:12]
     # Also include last dir name for readability
     name = Path(cwd).name
     return SESSIONS_DIR / f"{name}_{key}.json"

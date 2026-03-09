@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Daemon configuration for Codey v2.
+Daemon configuration for Codey-v2.
 
 Loads configuration from ~/.codey-v2/config.json
 Provides defaults for all settings.
@@ -21,9 +21,9 @@ CONFIG_DIR.mkdir(parents=True, exist_ok=True)
 DEFAULT_CONFIG: Dict[str, Any] = {
     # Daemon settings
     "daemon": {
-        "pid_file": str(Path.home() / ".codey-v2/codey.pid"),
-        "socket_file": str(Path.home() / ".codey-v2/codey.sock"),
-        "log_file": str(Path.home() / ".codey-v2/codey.log"),
+        "pid_file": str(Path.home() / ".codey-v2/codey-v2.pid"),
+        "socket_file": str(Path.home() / ".codey-v2/codey-v2.sock"),
+        "log_file": str(Path.home() / ".codey-v2/codey-v2.log"),
         "log_level": "INFO",  # DEBUG, INFO, WARNING, ERROR
     },
     

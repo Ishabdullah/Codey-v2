@@ -2,7 +2,7 @@ import os
 import shutil
 from pathlib import Path
 
-CODEY_DIR = Path(os.environ.get("CODEY_DIR", Path.home() / "codey"))
+CODEY_DIR = Path(os.environ.get("CODEY_DIR", Path.home() / "codey-v2"))
 MODEL_PATH = Path(os.environ.get(
     "CODEY_MODEL",
     Path.home() / "models" / "qwen2.5-coder-7b" / "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
@@ -11,7 +11,7 @@ MODEL_PATH = Path(os.environ.get(
 # Secondary model (1.5B for simple tasks) - Phase 3
 SECONDARY_MODEL_PATH = Path(os.environ.get(
     "CODEY_SECONDARY_MODEL",
-    Path.home() / "models" / "qwen2.5-1.5b" / "Qwen2.5-1.5B-Instruct-Q8_0.gguf"
+    Path.home() / "models" / "qwen2.5-1.5b" / "qwen2.5-1.5b-instruct-q8_0.gguf"
 ))
 
 # Router configuration - Phase 3
@@ -65,5 +65,5 @@ THERMAL_CONFIG["original_threads"] = MODEL_CONFIG.get("n_threads", 4)
 CODE_DIR = Path(__file__).parent.parent.resolve()
 WORKSPACE_ROOT = Path(os.getcwd()).resolve()
 
-CODEY_VERSION = "1.0.0"
-CODEY_NAME    = "Codey"
+CODEY_VERSION = "2.0.0"
+CODEY_NAME    = "Codey-v2"

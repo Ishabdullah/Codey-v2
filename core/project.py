@@ -28,11 +28,17 @@ CONTEXT_FILES = [
 
 _project_cache: dict = {}
 _last_cwd: str = ""
+_repo_map_cache: str = ""
+_repo_map_cwd: str = ""
 
 def get_repo_map(cwd: str = None) -> str:
     """Generate a lightweight map of the project (symbols, classes, imports)."""
+    global _repo_map_cache, _repo_map_cwd
     from core.context import is_ignored
     cwd = Path(cwd or os.getcwd())
+    cwd_str = str(cwd)
+    if cwd_str == _repo_map_cwd and _repo_map_cache is not None:
+        return _repo_map_cache
     
     # Only scan these extensions
     map_exts = {".py", ".js", ".ts", ".c", ".cpp", ".rs", ".go"}
@@ -77,12 +83,16 @@ def get_repo_map(cwd: str = None) -> str:
             continue
             
     if not repo_map:
+        _repo_map_cache = ""
+        _repo_map_cwd = cwd_str
         return ""
 
     result = "## Project Map\n" + "\n\n".join(repo_map)
     # Cap at ~1200 chars (~300 tokens) to avoid bloating the system prompt
     if len(result) > 1200:
         result = result[:1197] + "..."
+    _repo_map_cache = result
+    _repo_map_cwd = cwd_str
     return result
 
 def detect_project(cwd: str = None) -> dict:
@@ -169,6 +179,8 @@ def get_project_summary() -> str:
 
 def invalidate_cache():
     """Call this when cwd changes."""
-    global _project_cache, _last_cwd
+    global _project_cache, _last_cwd, _repo_map_cache, _repo_map_cwd
     _project_cache = {}
     _last_cwd = ""
+    _repo_map_cache = ""
+    _repo_map_cwd = ""

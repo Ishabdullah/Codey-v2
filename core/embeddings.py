@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Embeddings for Codey v2 hierarchical memory.
+Embeddings for Codey-v2 hierarchical memory.
 
 Uses sentence-transformers for semantic search:
 - Embed text chunks into vectors

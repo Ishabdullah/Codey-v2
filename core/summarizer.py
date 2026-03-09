@@ -5,6 +5,7 @@ Inspired by Claude Code's conversation summarization agent prompt.
 """
 from utils.logger import info, warning
 from utils.config import AGENT_CONFIG
+from core.tokens import estimate_messages_tokens
 
 # Token estimate threshold before we summarize
 SUMMARY_THRESHOLD = 1500  # ~6000 chars
@@ -22,14 +23,9 @@ Keep the summary under 200 words. Be specific about file names, error messages, 
 Write in past tense. Start with: "Previously: "
 """
 
-def estimate_tokens(messages: list[dict]) -> int:
-    """Rough token count for a message list."""
-    total_chars = sum(len(m.get("content", "")) for m in messages)
-    return total_chars // 4
-
 def should_summarize(history: list[dict]) -> bool:
     """Return True if history is getting too large."""
-    return estimate_tokens(history) > SUMMARY_THRESHOLD
+    return estimate_messages_tokens(history) > SUMMARY_THRESHOLD
 
 def summarize_history(history: list[dict]) -> list[dict]:
     """
@@ -39,7 +35,7 @@ def summarize_history(history: list[dict]) -> list[dict]:
     if len(history) < 4:
         return history
 
-    from core.inference import infer
+    from core.inference_v2 import infer
 
     # Keep last 2 turns (4 messages) fresh
     to_summarize = history[:-4] if len(history) > 4 else history[:-2]

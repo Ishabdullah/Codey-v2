@@ -1,6 +1,9 @@
 rich==14.3.3
 pytest==9.0.2
 
+# Core LLM inference
+llama-cpp-python>=0.2.50
+
 # Phase 4: Hierarchical Memory
 sentence-transformers>=2.2.0
 numpy>=1.24.0

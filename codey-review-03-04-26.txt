@@ -1,7 +1,7 @@
-# Codey Project Audit Review - March 4, 2026
+# Codey-v2 Project Audit Review - March 4, 2026
 
 ### 1) EXECUTIVE SUMMARY
-Codey is a well-architected, terminal-based AI coding assistant. Its design mirrors industry leaders like Aider and Claude Code, with a strong emphasis on local execution and efficient context handling.
+Codey-v2 is a well-architected, terminal-based AI coding assistant. Its design mirrors industry leaders like Aider and Claude Code, with a strong emphasis on local execution and efficient context handling.
 
 *   **Overall Architecture Quality:** High. Clean separation of concerns between inference, memory, orchestration, and tools.
 *   **Production Readiness Score:** 6/10 (Beta stage). Solid core, but lacks robust sandboxing and has some brittle tool-parsing logic.
@@ -82,9 +82,9 @@ Codey is a well-architected, terminal-based AI coding assistant. Its design mirr
 ---
 
 ### 7) COMPETITIVE COMPARISON
-*   **Vs. Aider:** Codey matches Aider’s "architect" mode but lacks its robust Git integration (auto-commits with diff-based messages) and sophisticated repo-map (via Tree-sitter).
-*   **Vs. Claude Code:** Codey’s UI panel design and tool-use flow are clearly inspired by Claude Code and are quite effective. However, it lacks the massive context and reasoning depth of Claude 3.5/3.7.
-*   **Vs. Cursor/Continue:** Codey is more portable (CLI/Termux) but lacks the IDE-level indexing (Vector DB) and "Tab" completion features.
+*   **Vs. Aider:** Codey-v2 matches Aider's "architect" mode but lacks its robust Git integration (auto-commits with diff-based messages) and sophisticated repo-map (via Tree-sitter).
+*   **Vs. Claude Code:** Codey-v2's UI panel design and tool-use flow are clearly inspired by Claude Code and are quite effective. However, it lacks the massive context and reasoning depth of Claude 3.5/3.7.
+*   **Vs. Cursor/Continue:** Codey-v2 is more portable (CLI/Termux) but lacks the IDE-level indexing (Vector DB) and "Tab" completion features.
 
 ---
 

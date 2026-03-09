@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Daemon core for Codey v2.
+Daemon core for Codey-v2.
 
 Main daemon process with:
 - Unix socket server for CLI communication
@@ -30,26 +30,15 @@ from core.task_executor import TaskExecutor
 
 # ==================== Configuration ====================
 
-# Load daemon configuration
-daemon_config = get_config()
-
-# Apply log configuration
-log_level = daemon_config.get("daemon", "log_level", default="INFO")
-set_log_level(log_level)
-
-log_file = daemon_config.get("daemon", "log_file", default=str(Path.home() / ".codey-v2/codey.log"))
-setup_file_logging(log_file)
-
-# Daemon directory in user's home (Codey v2 specific)
+# Daemon directory — defined at module level so check_pid_file / is_daemon_running
+# can use it without triggering a full Daemon init.
 DAEMON_DIR = Path.home() / ".codey-v2"
 
-# Paths from config (with defaults)
-PID_FILE = Path(daemon_config.get("daemon", "pid_file", default=str(DAEMON_DIR / "codey.pid")))
-SOCKET_FILE = Path(daemon_config.get("daemon", "socket_file", default=str(DAEMON_DIR / "codey.sock")))
-LOG_FILE = Path(daemon_config.get("daemon", "log_file", default=str(DAEMON_DIR / "codey.log")))
-
-# Ensure daemon directory exists
-DAEMON_DIR.mkdir(parents=True, exist_ok=True)
+# Stable path constants with hardcoded defaults.
+# These may be overridden when Daemon.__init__ reads the config file.
+PID_FILE    = DAEMON_DIR / "codey-v2.pid"
+SOCKET_FILE = DAEMON_DIR / "codey-v2.sock"
+LOG_FILE    = DAEMON_DIR / "codey-v2.log"
 
 
 # ==================== PID File Management ====================
@@ -64,10 +53,12 @@ def check_pid_file() -> bool:
     if PID_FILE.exists():
         try:
             pid = int(PID_FILE.read_text().strip())
-            os.kill(pid, 0)  # Check if process exists
+            os.kill(pid, 0)  # Signal 0 checks if process exists
             return True  # Daemon is running
+        except PermissionError:
+            return True  # Process exists but owned by another user — treat as running
         except (ProcessLookupError, ValueError):
-            # Process is dead, remove stale PID file
+            # Process is dead or PID file is corrupt — remove stale file
             warning("Removing stale PID file")
             PID_FILE.unlink(missing_ok=True)
             return False
@@ -94,11 +85,12 @@ class DaemonServer:
     to appropriate handlers.
     """
     
-    def __init__(self, state: StateStore):
+    def __init__(self, state: StateStore, shutdown_callback=None):
         self.state = state
         self.server: Optional[asyncio.Server] = None
         self.running = False
         self._handlers: Dict[str, Callable] = {}
+        self._shutdown_callback = shutdown_callback
         self._register_default_handlers()
     
     def _register_default_handlers(self):
@@ -231,9 +223,10 @@ class DaemonServer:
             return {"status": "error", "message": f"Task {task_id} not found"}
 
     async def _handle_shutdown(self, data: Dict) -> Dict:
-        """Handle shutdown request."""
+        """Handle shutdown request — triggers the daemon's main loop to exit."""
         info("Shutdown requested via socket")
-        self.running = False
+        if self._shutdown_callback:
+            self._shutdown_callback()
         return {"status": "ok", "message": "Shutting down"}
     
     async def _handle_client(self, reader: asyncio.StreamReader, writer: asyncio.StreamWriter):
@@ -317,9 +310,27 @@ class Daemon:
     """
 
     def __init__(self):
+        global PID_FILE, SOCKET_FILE, LOG_FILE
+
+        # Load config and apply logging — done here, not at module level,
+        # so importing core.daemon for CLI helpers doesn't trigger side effects.
+        self._config = get_config()
+        DAEMON_DIR.mkdir(parents=True, exist_ok=True)
+
+        log_level = self._config.get("daemon", "log_level", default="INFO")
+        set_log_level(log_level)
+
+        log_file_path = self._config.get("daemon", "log_file", default=str(LOG_FILE))
+        setup_file_logging(log_file_path)
+
+        # Override path constants from config so all other functions see them.
+        PID_FILE    = Path(self._config.get("daemon", "pid_file",    default=str(DAEMON_DIR / "codey-v2.pid")))
+        SOCKET_FILE = Path(self._config.get("daemon", "socket_file", default=str(DAEMON_DIR / "codey-v2.sock")))
+        LOG_FILE    = Path(log_file_path)
+
         self.state = get_state_store()
-        self.server = DaemonServer(self.state)
-        self.executor = TaskExecutor(self.state, daemon_config)
+        self.server = DaemonServer(self.state, shutdown_callback=self._trigger_shutdown)
+        self.executor = TaskExecutor(self.state, self._config)
         from core.planner_v2 import get_planner
         self.planner = get_planner()
         from core.background import get_background_manager, get_file_watch_manager
@@ -327,10 +338,17 @@ class Daemon:
         self.file_watch = get_file_watch_manager()
         self.running = True
         self._reload_requested = False
-        
+
         # Register signal handlers
         signal.signal(signal.SIGTERM, self._handle_sigterm)
         signal.signal(signal.SIGUSR1, self._handle_sigusr1)
+
+    def _trigger_shutdown(self):
+        """Called by DaemonServer when a socket shutdown command is received."""
+        info("Daemon shutdown triggered via socket command")
+        self.running = False
+        if self.server.server:
+            self.server.server.close()
     
     def _handle_sigterm(self, signum, frame):
         """Handle SIGTERM (graceful shutdown)."""
@@ -351,8 +369,11 @@ class Daemon:
         # Start socket server
         server_task = asyncio.create_task(self.server.start())
 
-        # Start task executor
-        executor_task = asyncio.create_task(self.executor.start())
+        # NOTE: We do NOT start executor.start() as a background task.
+        # The executor's auto-poll loop and _process_planner_tasks both poll the
+        # same SQLite task_queue, creating a race where the same task could be
+        # claimed and executed twice.  All task dispatch goes through
+        # _process_planner_tasks, which uses try_claim_task() for atomic claiming.
 
         # Start file watch manager
         self.file_watch.start()
@@ -363,9 +384,8 @@ class Daemon:
                 if self._reload_requested:
                     info("Processing reload...")
                     self._reload_requested = False
-                    # In future: reload config, models, etc.
 
-                # Process planner tasks
+                # Dispatch next ready task (planner queue + direct commands)
                 await self._process_planner_tasks()
 
                 # Cleanup completed background tasks periodically
@@ -378,14 +398,6 @@ class Daemon:
             # Stop file watch
             self.file_watch.stop()
 
-            # Stop executor
-            self.executor.stop()
-            executor_task.cancel()
-            try:
-                await executor_task
-            except asyncio.CancelledError:
-                pass
-
             # Cleanup
             await self.server.stop()
             remove_pid_file()
@@ -394,20 +406,78 @@ class Daemon:
             info("Daemon stopped")
 
     async def _process_planner_tasks(self):
-        """Process pending tasks from the planner."""
-        # Get next ready task from planner
-        task = self.planner.get_next_task()
-        if task:
-            info(f"Planner: executing task {task.id}: {task.description[:50]}...")
-            
-            # Start the task
-            self.planner.start_task(task.id)
-            
-            # Execute using task executor
-            # For now, just mark as complete (full integration in Phase 5)
-            await asyncio.sleep(0.1)
-            self.planner.complete_task(task.id, "Task completed via planner")
-            success(f"Planner: task {task.id} completed")
+        """Dispatch one ready task per main-loop tick.
+
+        Two task sources are unified here:
+
+        1. Planner tasks  — added via Planner.add_task(); tracked in the planner's
+           in-memory dict AND persisted to SQLite.
+        2. Direct command tasks — added via the socket `command` handler directly
+           into SQLite (not in the planner dict).
+
+        All claiming is done with state.try_claim_task() which atomically flips
+        status pending→running only once, preventing double-execution.
+        """
+        timeout = self._config.get("tasks", "task_timeout", default=1800)
+
+        # ── 1. Try a planner task first (respects dependency ordering) ──────────
+        planner_task = self.planner.get_next_task()
+        if planner_task:
+            # Atomically claim in SQLite before any yield point.
+            if not self.state.try_claim_task(planner_task.id):
+                # Already claimed by a previous tick that somehow didn't clean up.
+                # Sync in-memory state from SQLite.
+                db = self.state.get_task(planner_task.id)
+                if db:
+                    if db["status"] == "done":
+                        self.planner.complete_task(planner_task.id, db.get("result", ""))
+                    elif db["status"] == "failed":
+                        self.planner.fail_task(planner_task.id, db.get("result", "already failed"))
+                return
+
+            # Sync in-memory planner state. planner.start_task() re-runs the SQLite
+            # UPDATE (harmless — overwrites 'running' with 'running') and sets the
+            # in-memory task status and _current_task pointer.
+            self.planner.start_task(planner_task.id)
+
+            info(f"Planner: dispatching task {planner_task.id}: {planner_task.description[:50]}...")
+            try:
+                result = await asyncio.wait_for(
+                    self.executor._execute_task(planner_task.description),
+                    timeout=timeout,
+                )
+                self.planner.complete_task(planner_task.id, result)
+            except asyncio.TimeoutError:
+                err = f"Task timed out after {timeout}s"
+                error(err)
+                self.planner.fail_task(planner_task.id, err)
+            except Exception as e:
+                error(f"Planner: task {planner_task.id} error: {e}")
+                self.planner.fail_task(planner_task.id, str(e))
+            return
+
+        # ── 2. Fall back to direct-command tasks (not in planner dict) ──────────
+        db_task = self.state.get_next_pending()
+        if not db_task:
+            return
+        # Only handle tasks that aren't tracked by the planner in memory.
+        if db_task["id"] in self.planner._tasks:
+            return  # planner will handle it next tick
+
+        if not self.state.try_claim_task(db_task["id"]):
+            return  # lost the race — another path claimed it
+
+        info(f"Daemon: executing direct task {db_task['id']}: {db_task['description'][:50]}...")
+        try:
+            result = await asyncio.wait_for(
+                self.executor._execute_task(db_task["description"]),
+                timeout=timeout,
+            )
+            self.state.complete_task(db_task["id"], result)
+        except asyncio.TimeoutError:
+            self.state.fail_task(db_task["id"], f"Task timed out after {timeout}s")
+        except Exception as e:
+            self.state.fail_task(db_task["id"], str(e))
 
     def run(self):
         """Run the daemon."""

@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Codey v2 Installation Script
+# Codey-v2 Installation Script
 #
-# This script installs everything needed for Codey v2:
+# This script installs everything needed for Codey-v2:
 # - Python dependencies
 # - llama.cpp binary
 # - Both models (7B primary + 1.5B secondary)
@@ -35,7 +35,7 @@ SECONDARY_MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/reso
 
 echo -e "${BLUE}"
 echo "╔═══════════════════════════════════════════════════════════╗"
-echo "║           Codey v2 Installation Script                    ║"
+echo "║           Codey-v2 Installation Script                    ║"
 echo "║   Persistent AI Agent for Termux                          ║"
 echo "╚═══════════════════════════════════════════════════════════╝"
 echo -e "${NC}"
@@ -271,13 +271,13 @@ setup_path() {
     
     # Check if already in PATH
     if grep -q "codey-v2" "$SHELL_CONFIG" 2>/dev/null; then
-        print_status "Codey v2 already in PATH"
+        print_status "Codey-v2 already in PATH"
     else
         # Add to PATH
         echo "" >> "$SHELL_CONFIG"
-        echo "# Codey v2" >> "$SHELL_CONFIG"
+        echo "# Codey-v2" >> "$SHELL_CONFIG"
         echo "export PATH=\"$CODEY_V2_DIR:\$PATH\"" >> "$SHELL_CONFIG"
-        print_success "Added Codey v2 to PATH in $SHELL_CONFIG"
+        print_success "Added Codey-v2 to PATH in $SHELL_CONFIG"
     fi
     
     # Source the config file
@@ -350,7 +350,7 @@ print_completion() {
     echo "╚═══════════════════════════════════════════════════════════╝"
     echo -e "${NC}"
     echo
-    echo "To start using Codey v2:"
+    echo "To start using Codey-v2:"
     echo
     echo "  1. Restart your terminal OR run:"
     echo "     ${BLUE}source $SHELL_CONFIG${NC}"
@@ -380,7 +380,7 @@ print_completion() {
 
 # Main installation flow
 main() {
-    echo "This script will install Codey v2 and all dependencies."
+    echo "This script will install Codey-v2 and all dependencies."
     echo "Estimated download size: ~7GB (models) + ~500MB (llama.cpp)"
     echo
     read -p "Continue? [Y/n] " -n 1 -r

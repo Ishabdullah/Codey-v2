@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Model router for Codey v2.
+Model router for Codey-v2.
 
 Routes tasks to appropriate model based on complexity:
 - Simple tasks (<50 chars, simple keywords) → 1.5B model

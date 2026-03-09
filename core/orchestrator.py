@@ -66,7 +66,7 @@ def parse_task_list(model_output):
 
 def plan_tasks(user_message, project_context=''):
     """Ask model to plan the task. Returns TaskQueue."""
-    from core.inference import infer
+    from core.inference_v2 import infer
     system = PLAN_PROMPT
     if project_context:
         system += f'\nProject context:\n{project_context}'

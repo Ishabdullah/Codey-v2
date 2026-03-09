@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Observability for Codey v2.
+Observability for Codey-v2.
 
 Agent can query its own state:
 - Token usage
@@ -32,8 +32,8 @@ from core.state import get_state_store
 
 class State:
     """
-    Observable state for Codey v2.
-    
+    Observable state for Codey-v2.
+
     Provides property accessors for:
     - tokens_used
     - memory_loaded

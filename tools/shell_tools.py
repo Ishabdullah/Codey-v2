@@ -1,4 +1,5 @@
 import subprocess
+from pathlib import Path
 from utils.logger import warning, confirm as ask_confirm
 from utils.config import AGENT_CONFIG
 
@@ -57,6 +58,18 @@ def shell(command: str, yolo: bool = False, timeout: int = 30) -> str:
         return f"[ERROR] {e}"
 
 def search_files(pattern: str, path: str = ".") -> str:
-    """Use find to search for files matching pattern."""
-    cmd = f'find {path} -name "{pattern}" 2>/dev/null | head -50'
-    return shell(cmd, yolo=True)
+    """Search for files matching pattern. Uses subprocess list args to prevent injection."""
+    try:
+        result = subprocess.run(
+            ["find", path, "-name", pattern],
+            capture_output=True, text=True, timeout=15
+        )
+        lines = (result.stdout + result.stderr).strip().splitlines()
+        lines = [l for l in lines if l.strip()][:50]
+        return "\n".join(lines) if lines else "(no matches)"
+    except subprocess.TimeoutExpired:
+        return "[ERROR] Search timed out"
+    except FileNotFoundError:
+        return "[ERROR] 'find' command not available"
+    except Exception as e:
+        return f"[ERROR] {e}"

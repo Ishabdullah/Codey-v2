@@ -1,0 +1,44 @@
+{
+  "checkpoint_id": "test2_starting_dual_model_swap",
+  "timestamp": "2026-03-08T00:21:25",
+  "test_number": 2,
+  "test_name": "Dual-Model Hot-Swap (7B ↔ 1.5B)",
+  "status": "starting",
+  "models_verified": {
+    "primary": {
+      "path": "~/models/qwen2.5-coder-7b/Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+      "exists": true
+    },
+    "secondary": {
+      "path": "~/models/qwen2.5-1.5b/Qwen2.5-1.5B-Instruct-Q8_0.gguf",
+      "exists": true,
+      "size": "1.85GB"
+    }
+  },
+  "previous_test": {
+    "number": 1,
+    "name": "Complex coding task with daemon",
+    "status": "complete",
+    "artifacts": [
+      "test_project/app.py",
+      "test_project/requirements.txt"
+    ],
+    "issues": [
+      "Inference timeout on initial run",
+      "Slow inference (0.3-0.8 t/s) - thermal throttling"
+    ]
+  },
+  "test2_plan": {
+    "step1": "✓ Verify secondary model (1.5B) is available",
+    "step2": "Send simple task (should route to 1.5B)",
+    "step3": "Send complex task (should route to 7B)",
+    "step4": "Verify hot-swap behavior and timing"
+  },
+  "system_state": {
+    "daemon_running": false,
+    "primary_model": "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf",
+    "secondary_model": "Qwen2.5-1.5B-Instruct-Q8_0.gguf",
+    "server_port": 8080
+  },
+  "recovery_notes": "If crash occurs: 1) Check llama-server.log, 2) Verify model files exist, 3) Check thermal state, 4) Kill any stuck llama-server processes"
+}

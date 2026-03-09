@@ -1,11 +1,12 @@
 import unittest
 import os
 from pathlib import Path
-from core.context import load_file, _loaded_files
+from core.context import load_file
+from core.memory import memory as _mem
 
 class TestCodeyIgnore(unittest.TestCase):
     def setUp(self):
-        _loaded_files.clear()
+        _mem.clear()
         self.env_file = Path(".env")
         self.env_file.write_text("SECRET=123")
         self.ignore_file = Path(".codeyignore")
@@ -20,7 +21,7 @@ class TestCodeyIgnore(unittest.TestCase):
             for f in self.secret_dir.iterdir():
                 os.remove(f)
             os.rmdir(self.secret_dir)
-        _loaded_files.clear()
+        _mem.clear()
 
     def test_default_ignore(self):
         res = load_file(".env")

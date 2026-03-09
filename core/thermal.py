@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Thermal Management for Codey v2.
+Thermal Management for Codey-v2.
 
 Tracks inference duration and:
 - Logs warning after 5 min continuous
@@ -20,8 +20,8 @@ from utils.config import THERMAL_CONFIG, MODEL_CONFIG
 
 class ThermalManager:
     """
-    Manages thermal throttling for Codey v2.
-    
+    Manages thermal throttling for Codey-v2.
+
     Tracks:
     - Continuous inference duration
     - Total inference time
@@ -35,6 +35,9 @@ class ThermalManager:
         self._warnings_issued: int = 0
         self._thread_reductions: int = 0
         self._last_inference_end: Optional[float] = None
+        # Set to True when a thread reduction fires; inference.py checks this
+        # and restarts llama-server with the updated thread count on next call.
+        self.restart_recommended: bool = False
     
     def start_inference(self):
         """Mark the start of an inference."""
@@ -85,10 +88,14 @@ class ThermalManager:
             self._current_threads = new_threads
             MODEL_CONFIG["n_threads"] = new_threads
             self._thread_reductions += 1
-            
+            # Signal inference.py to restart llama-server with the new thread count.
+            # The running server ignores config changes; a restart is required.
+            self.restart_recommended = True
+
             warning(
-                f"Thermal: Reduced threads from {old_threads} to {new_threads} "
-                f"(total inference: {self._total_inference_sec/60:.1f} min)"
+                f"Thermal: Reduced threads {old_threads}→{new_threads} "
+                f"(total inference: {self._total_inference_sec/60:.1f} min). "
+                f"Server will restart on next inference call."
             )
     
     def reset(self):

@@ -1,4 +1,4 @@
-# Codey Update Plan
+# Codey-v2 Update Plan
 
 ## Hardware Constraints (S24 Ultra, 12GB RAM)
 
@@ -158,8 +158,8 @@ THERMAL_CONFIG = {
 
 ```bash
 # Primary model (if not already present)
-mkdir -p ~/codey/model
-cd ~/codey/model
+mkdir -p ~/codey-v2/model
+cd ~/codey-v2/model
 
 # Qwen2.5-Coder-7B-Instruct Q4_K_M
 wget https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf

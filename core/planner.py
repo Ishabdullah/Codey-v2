@@ -3,12 +3,13 @@ Plan mode — think before acting on complex tasks.
 Codey writes a short plan, user approves, then executes.
 """
 from utils.logger import console, info, warning, separator
+from core.orchestrator import is_complex  # single shared implementation
 
 PLAN_SYSTEM_PROMPT = """You are Codey's planning module. When given a task, write a concise action plan.
 
 Format your plan as numbered steps. Each step should be ONE specific action:
 - "Create file X with Y"
-- "Edit function Z in file A to do B"  
+- "Edit function Z in file A to do B"
 - "Run command C to verify"
 
 Rules:
@@ -24,26 +25,9 @@ Example:
 Ready to execute.
 """
 
-# Keywords that suggest a complex multi-step task
-COMPLEX_TASK_SIGNALS = [
-    "create", "build", "implement", "add", "refactor", "rewrite",
-    "and then", "then run", "also", "with tests", "multiple",
-    "class", "module", "app", "application", "system",
-]
-
-def is_complex(user_message: str) -> bool:
-    """Heuristic: does this message look like a multi-step task?"""
-    msg = user_message.lower()
-    # Long messages are usually complex
-    if len(user_message) > 120:
-        return True
-    # Multiple action words
-    signals = sum(1 for s in COMPLEX_TASK_SIGNALS if s in msg)
-    return signals >= 2
-
 def get_plan(user_message: str, system_context: str = "") -> str:
     """Ask the model to plan before executing."""
-    from core.inference import infer
+    from core.inference_v2 import infer
     messages = [
         {"role": "system", "content": PLAN_SYSTEM_PROMPT + (f"\n\nProject context:\n{system_context}" if system_context else "")},
         {"role": "user",   "content": f"Plan this task: {user_message}"}
@@ -65,7 +49,7 @@ def show_and_confirm_plan(plan: str) -> bool:
             console.print(f"  {line}")
     separator()
     try:
-        ans = input("Execute this plan? [Y/n/edit]: ").strip().lower()
+        ans = console.input("Execute this plan? [Y/n/edit]: ").strip().lower()
         if ans in ("", "y", "yes"):
             return True, plan
         elif ans in ("n", "no"):
@@ -73,7 +57,7 @@ def show_and_confirm_plan(plan: str) -> bool:
             return False, plan
         else:
             # User wants to edit — let them type a revised instruction
-            revised = input("Revised instruction: ").strip()
+            revised = console.input("Revised instruction: ").strip()
             return True, revised
     except (KeyboardInterrupt, EOFError):
         return False, plan

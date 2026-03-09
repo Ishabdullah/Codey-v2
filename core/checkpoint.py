@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Checkpoint system for Codey v2 self-modification.
+Checkpoint system for Codey-v2 self-modification.
 
 Before modifying core files, creates a checkpoint:
 - Git commit with checkpoint message
@@ -48,10 +48,10 @@ class Checkpoint:
 
 
 def is_core_file(file_path: str) -> bool:
-    """Check if a file is a core Codey file that needs checkpointing."""
+    """Check if a file is a Codey-v2 file that needs checkpointing."""
     path = Path(file_path).resolve()
-    
-    # Check if in CODE_DIR (Codey source)
+
+    # Check if in CODE_DIR (Codey-v2 source)
     try:
         path.relative_to(CODE_DIR)
         return True

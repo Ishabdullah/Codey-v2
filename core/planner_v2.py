@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Internal Planner for Codey v2.
+Internal Planner for Codey-v2.
 
 Native task planning (no model-asked orchestration):
 - Task queue with dependency tracking
@@ -45,8 +45,8 @@ class Task:
 
 class Planner:
     """
-    Internal task planner for Codey v2.
-    
+    Internal task planner for Codey-v2.
+
     Features:
     - Task queue with dependencies
     - Automatic task breakdown
@@ -149,9 +149,11 @@ class Planner:
     
     def _update_task_dependencies(self, task_id: int, dependencies: List[int]):
         """Update task dependencies in database."""
-        # Note: This would require extending the state.py schema
-        # For now, we track dependencies in memory only
-        pass
+        import json
+        self.state.execute(
+            "UPDATE task_queue SET dependencies = ? WHERE id = ?",
+            (json.dumps(dependencies), task_id),
+        )
     
     def get_next_task(self) -> Optional[Task]:
         """
@@ -223,44 +225,48 @@ class Planner:
         
         return True
     
-    def fail_task(self, task_id: int, error: str) -> bool:
+    def fail_task(self, task_id: int, error_msg: str) -> bool:
         """
         Mark a task as failed, with retry logic.
-        
+
         If retries remain, sets task back to pending.
         """
         task = self._tasks.get(task_id)
         if not task:
             return False
-        
+
         task.retry_count += 1
-        
+        self.state.increment_retry(task_id)
+
         if task.retry_count < self.max_retries:
             # Retry - set back to pending
             task.status = TaskStatus.PENDING
-            task.error = f"Retry {task.retry_count}/{self.max_retries}: {error}"
+            task.error = f"Retry {task.retry_count}/{self.max_retries}: {error_msg}"
+            self.state.execute(
+                "UPDATE task_queue SET status = 'pending' WHERE id = ?", (task_id,)
+            )
             warning(f"Planner: task {task_id} failed, retrying ({task.retry_count}/{self.max_retries})")
         else:
             # Max retries reached - mark as failed
             task.status = TaskStatus.FAILED
-            task.error = error
+            task.error = error_msg
             task.completed_at = int(time.time())
-            
+
             # Update database
-            self.state.fail_task(task_id, error)
-            
-            error(f"Planner: task {task_id} failed permanently: {error}")
-            
+            self.state.fail_task(task_id, error_msg)
+
+            error(f"Planner: task {task_id} failed permanently: {error_msg}")
+
             # Log in episodic memory
-            self.state.log_action("task_failed", f"Task {task_id}: {error[:200]}")
-        
+            self.state.log_action("task_failed", f"Task {task_id}: {error_msg[:200]}")
+
         # Clear current task
         if self._current_task and self._current_task.id == task_id:
             self._current_task = None
-        
+
         return True
-    
-    def adapt(self, task_id: int, error: str) -> Optional[str]:
+
+    def adapt(self, task_id: int, error_msg: str) -> Optional[str]:
         """
         Adapt strategy on failure.
         
@@ -279,15 +285,15 @@ class Planner:
         
         # Check for registered adaptation callbacks
         for pattern, callback in self._adaptation_callbacks.items():
-            if pattern in error.lower():
-                return callback(task, error)
-        
+            if pattern in error_msg.lower():
+                return callback(task, error_msg)
+
         # Default adaptations
-        if "write" in error.lower() or "permission" in error.lower():
+        if "write" in error_msg.lower() or "permission" in error_msg.lower():
             return "Try using patch instead of write"
-        elif "not found" in error.lower() or "exists" in error.lower():
+        elif "not found" in error_msg.lower() or "exists" in error_msg.lower():
             return "Create the file/directory first"
-        elif "syntax" in error.lower() or "error" in error.lower():
+        elif "syntax" in error_msg.lower() or "error" in error_msg.lower():
             return "Debug with smaller test case first"
         
         return None
