@@ -42,6 +42,16 @@ def parse_args():
     parser.add_argument("--daemon",     action="store_true", help="Run in daemon mode (v2 feature)")
     parser.add_argument("--no-resume",  action="store_true", help="Start fresh, ignore saved session")
     parser.add_argument("--allow-self-mod", action="store_true", help="Allow self-modification with checkpoint enforcement")
+    # Fine-tuning commands (v2.3.0)
+    parser.add_argument("--finetune",   action="store_true", help="Export fine-tuning dataset and generate Colab notebook")
+    parser.add_argument("--ft-days",    type=int, default=30, help="Days of history to include (default: 30)")
+    parser.add_argument("--ft-quality", type=float, default=0.7, help="Min quality threshold 0.0-1.0 (default: 0.7)")
+    parser.add_argument("--ft-model",   choices=["1.5b", "7b", "both"], default="both", help="Model variant for fine-tuning")
+    parser.add_argument("--ft-output",  type=str, help="Output directory (default: ~/Downloads/codey-finetune)")
+    parser.add_argument("--import-lora", metavar="PATH", help="Import LoRA adapter from path")
+    parser.add_argument("--lora-model", choices=["primary", "secondary"], default="primary", help="Model for LoRA import")
+    parser.add_argument("--lora-quant", type=str, default="q4_0", help="Quantization for merged model")
+    parser.add_argument("--lora-merge", action="store_true", help="Merge LoRA on-device (requires llama.cpp)")
     return parser.parse_args()
 
 def apply_overrides(args):
@@ -434,6 +444,11 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
   codey-v2 --no-resume         Start fresh (ignore saved session)
   codey-v2 --allow-self-mod    Enable self-modification (with checkpoints)
 
+[bold]Fine-tuning (v2.3.0):[/bold]
+  codey-v2 --finetune          Export fine-tuning dataset + Colab notebook
+  codey-v2 --finetune --ft-days 30 --ft-quality 0.7 --ft-model both
+  codey-v2 --import-lora /path/to/adapter --lora-model primary
+
 [bold]Environment variables:[/bold]
   ALLOW_SELF_MOD=1             Enable self-modification (alternative to flag)
   CODEY_MODEL                  Override model path
@@ -605,6 +620,44 @@ def main():
         config.AGENT_CONFIG["confirm_write"] = False
         config.AGENT_CONFIG["confirm_shell"] = False
         fix_file(args.fix, extra_instruction=args.prompt or "", yolo=True)
+        shutdown()
+        return
+
+    # Fine-tuning data export (v2.3.0)
+    if args.finetune:
+        from core.finetune_prep import prepare_finetune_data
+        info("Preparing fine-tuning dataset...")
+        results = prepare_finetune_data(
+            days=args.ft_days,
+            min_quality=args.ft_quality,
+            model_variant=args.ft_model,
+            output_dir=args.ft_output
+        )
+        if "error" in results:
+            error(results["error"])
+            sys.exit(1)
+        shutdown()
+        return
+
+    # LoRA adapter import (v2.3.0)
+    if args.import_lora:
+        from core.lora_import import import_lora_adapter
+        info(f"Importing LoRA adapter from {args.import_lora}...")
+        results = import_lora_adapter(
+            adapter_path=args.import_lora,
+            model_variant=args.lora_model,
+            quantize=args.lora_quant,
+            merge_on_device=args.lora_merge
+        )
+        if results.get("success"):
+            success(f"LoRA adapter imported: {results.get('model_path')}")
+            if results.get("backup_path"):
+                info(f"Backup created: {results['backup_path']} (use --rollback to restore)")
+        else:
+            error(f"Import failed: {results.get('error', 'Unknown error')}")
+            if results.get("instructions"):
+                print(results["instructions"])
+            sys.exit(1)
         shutdown()
         return
 

@@ -18,6 +18,13 @@ Codey-v2 transforms Codey-v2 from a session-based CLI tool into a continuous AI 
 
 ## Key Features
 
+### 🔧 Fine-tuning Support (v2.3.0)
+- **Export Interaction Data**: Curate high-quality examples from your history
+- **Unsloth Colab Notebooks**: Ready-to-run fine-tuning on free T4 GPU
+- **LoRA Adapter Import**: Import trained adapters back to Codey-v2
+- **Off-device Training**: Heavy compute on Colab, not your phone
+- `codey2 --finetune` to export, `codey2 --import-lora` to import
+
 ### 🧠 Machine Learning (v2.2.0)
 - **User Preference Learning**: Automatically learns your coding style (test framework, naming, imports)
 - **Error Pattern Database**: Remembers errors and fixes - suggests solutions for similar errors
@@ -301,6 +308,99 @@ Tasks:
 ```bash
 ./codey2 cancel 2
 ```
+
+---
+
+## Fine-tuning (v2.3.0)
+
+Codey-v2 supports personalizing the underlying model using your interaction data.
+Heavy training happens off-device (Google Colab free tier), while your phone only
+handles lightweight data export and file management.
+
+### Step 1: Export Your Data
+
+```bash
+# Export last 30 days with default quality threshold
+codey2 --finetune
+
+# Customize export
+codey2 --finetune --ft-days 60 --ft-quality 0.6 --ft-model 7b
+```
+
+**Options:**
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--ft-days` | 30 | Days of history to include |
+| `--ft-quality` | 0.7 | Minimum quality (0.0-1.0) |
+| `--ft-model` | both | Model variant: `1.5b`, `7b`, or `both` |
+| `--ft-output` | ~/Downloads/codey-finetune | Output directory |
+
+**Output:**
+- `codey-finetune-1.5b.jsonl` - Dataset for 1.5B model
+- `codey-finetune-7b.jsonl` - Dataset for 7B model
+- `codey-finetune-qwen-coder-1.5b.ipynb` - Colab notebook
+- `codey-finetune-qwen-coder-7b.ipynb` - Colab notebook
+
+### Step 2: Train on Colab
+
+1. Go to https://colab.research.google.com
+2. Upload the generated notebook (`codey-finetune-*.ipynb`)
+3. Run all cells (takes 1-4 hours on free T4)
+4. Download the `codey-lora-adapter.zip` when complete
+
+**Note:** Training uses Unsloth for 2x speed and 70% less VRAM.
+
+### Step 3: Import Adapter
+
+```bash
+# Extract the downloaded adapter
+unzip codey-lora-adapter.zip
+
+# Import to Codey-v2
+codey2 --import-lora /path/to/codey-lora-adapter --lora-model primary
+```
+
+**Options:**
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--lora-model` | primary | `primary` (7B) or `secondary` (1.5B) |
+| `--lora-quant` | q4_0 | Quantization: `q4_0`, `q5_0`, `q8_0`, `f16` |
+| `--lora-merge` | false | Merge on-device (requires llama.cpp) |
+
+### Merging Adapters (Advanced)
+
+If you have llama.cpp installed and want to merge on-device:
+
+```bash
+# Merge adapter with base model (requires ~8GB RAM for 7B)
+codey2 --import-lora /path/to/adapter --lora-model primary --lora-merge
+
+# Or manually with llama.cpp:
+python ~/llama.cpp/convert-lora.py \
+  --base-model ~/models/qwen2.5-coder-7b/model.gguf \
+  --lora-adapter /path/to/adapter \
+  --output merged.gguf
+
+./quantize merged.gguf merged-q4.gguf q4_0
+```
+
+### Rollback
+
+If the fine-tuned model performs worse:
+
+```bash
+# Backup is created automatically before import
+# Restore original model
+codey2 --rollback --lora-model primary
+```
+
+### Quality Tips
+
+- **Higher `--ft-quality`** (0.8+): Only best examples, smaller dataset
+- **Lower `--ft-quality`** (0.5-0.6): More examples, noisier training
+- **More `--ft-days`**: More diverse data, longer training
+- **1.5B model**: Faster training (~1 hour), good for style adaptation
+- **7B model**: Better reasoning (~4 hours), handles complex tasks
 
 ---
 
@@ -767,6 +867,7 @@ ls -la ~/models/qwen2.5-1.5b/
 
 | Version | Highlights |
 |---------|------------|
+| **v2.3.0** | **Fine-tuning Support** - Export interaction data, Unsloth Colab notebooks, LoRA adapter import, off-device training workflow |
 | **v2.2.0** | **Machine Learning** - User preference learning, error pattern database, strategy effectiveness tracking, adaptive behavior |
 | **v2.1.0** | **Security & Reliability Hardening** - Shell injection prevention, self-mod opt-in, LRU model cache, JSON parser improvements, hallucination detection, orchestration filters, context budget |
 | **v2.0.0** | **Complete 7-phase implementation** - Daemon, Memory, Dual-Model, Planner, Checkpoints, Observability, Recovery |
