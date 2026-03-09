@@ -11,7 +11,7 @@ Codey-v2 transforms Codey-v2 from a session-based CLI tool into a continuous AI 
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v2.2.0 · Learning AI Agent · Termux
+  v2.4.0 · Learning AI Agent · Termux
 ```
 
 ---
