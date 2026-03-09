@@ -21,10 +21,14 @@ from utils.config import MODEL_CONFIG
 CTX_TOTAL       = MODEL_CONFIG['n_ctx']
 BUDGET_SYSTEM   = 700   # system prompt + CODEY.md
 BUDGET_SUMMARY  = 300   # rolling work summary
-BUDGET_FILES    = 800   # relevant file context
+BUDGET_FILES    = 800   # relevant file context (base)
 BUDGET_TURNS    = 600   # recent conversation turns
 BUDGET_MESSAGE  = 300   # current user message
 BUDGET_RESPONSE = CTX_TOTAL - BUDGET_SYSTEM - BUDGET_SUMMARY - BUDGET_FILES - BUDGET_TURNS - BUDGET_MESSAGE
+
+# Maximum file context budget for models with larger context windows (8k-32k)
+# This prevents file context from blowing the context window on large projects
+MAX_FILE_CONTEXT_TOKENS = 4000
 
 LRU_EVICT_AFTER = 3  # evict file after N turns without reference
 
@@ -155,9 +159,16 @@ class MemoryManager:
         """
         Score all loaded files by relevance to message,
         return as many as fit within budget (highest score first).
+        
+        Respects MAX_FILE_CONTEXT_TOKENS cap to prevent context overflow
+        on models with 8k-32k context windows.
         """
         if not self._files:
             return []
+        
+        # Apply maximum budget cap to prevent context overflow
+        effective_budget = min(budget, MAX_FILE_CONTEXT_TOKENS)
+        
         scored = sorted(
             self._files.values(),
             key=lambda r: (r.relevance_score(message), r.last_used_turn),
@@ -166,19 +177,19 @@ class MemoryManager:
         selected = []
         used = 0
         for record in scored:
-            if used + record.tokens <= budget:
+            if used + record.tokens <= effective_budget:
                 selected.append(record)
                 used += record.tokens
             else:
                 # Try to fit a truncated version
-                remaining = budget - used
+                remaining = effective_budget - used
                 marker = '\n...[truncated]'
-                
+
                 # Use same heuristic as estimate_tokens
                 code_exts = {".py", ".js", ".ts", ".c", ".cpp", ".h", ".rs", ".go"}
                 is_code = any(record.path.endswith(ext) for ext in code_exts)
                 multiplier = 3 if is_code else 4
-                
+
                 marker_tokens = len(marker) // multiplier
                 if remaining > marker_tokens + 10:
                     # Calculate max allowed chars for the remaining tokens
@@ -186,12 +197,12 @@ class MemoryManager:
                     # => chars <= remaining * multiplier + (multiplier - 1)
                     max_chars = (remaining * multiplier) + (multiplier - 1)
                     truncate_at = max_chars - len(marker)
-                    
+
                     truncated = record.content[:truncate_at]
                     tr = FileRecord(record.path, truncated + marker)
                     tr.last_used_turn = record.last_used_turn
                     # Re-verify tokens just in case
-                    if used + tr.tokens <= budget:
+                    if used + tr.tokens <= effective_budget:
                         selected.append(tr)
                 break
         return selected

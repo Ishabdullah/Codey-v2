@@ -48,6 +48,22 @@ def clean_response(text):
     return text.strip()
 
 def extract_json(raw):
+    """
+    Extract JSON from LLM output with robust handling of malformed JSON.
+    
+    Handles common LLM artifacts:
+    - Trailing commas
+    - Missing closing braces
+    - Escaped characters in strings
+    - Multi-line strings
+    - Unquoted values for certain keys
+    
+    Args:
+        raw: Raw LLM output potentially containing JSON
+        
+    Returns:
+        Parsed JSON as dict, or None if parsing fails
+    """
     raw = raw.strip()
     if not raw.startswith('{'):
         # Try to find the start of a JSON block
@@ -103,16 +119,27 @@ def extract_json(raw):
             pass
 
     # Final fallback: manual regex extraction for known keys
+    # Improved to handle escaped characters and multi-line values
     result = {}
     for key in ["name", "path", "content", "command", "pattern", "old_str", "new_str"]:
-        m = re.search('"' + key + '"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"', candidate, re.DOTALL)
-        if not m:
-             # Try without re.DOTALL if it failed, maybe it's multi-line without escaping
-             m = re.search('"' + key + '"\\s*:\\s*"(.*?)"', candidate, re.DOTALL)
+        # Try quoted value first (handles escaped characters properly)
+        m = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', candidate, re.DOTALL)
         if m:
-            result[key] = m.group(1).replace('\\n', '\n').replace('\\"', '"')
+            # Properly unescape the string
+            value = m.group(1)
+            # Handle common escape sequences
+            value = value.replace('\\n', '\n').replace('\\t', '\t').replace('\\r', '\r')
+            value = value.replace('\\"', '"').replace('\\\\', '\\')
+            result[key] = value
             continue
-    
+        
+        # Try unquoted value (for paths, commands, simple values)
+        m = re.search(rf'"{key}"\s*:\s*([^,}}\n]+)', candidate)
+        if m:
+            value = m.group(1).strip().strip('"').strip()
+            if value:
+                result[key] = value
+
     if result:
         name = result.pop("name", None)
         if name:
@@ -187,23 +214,69 @@ def is_error(result, tool_name):
     return False
 
 def is_hallucination(response, user_message, tools_used):
+    """
+    Detect if the model is hallucinating (claiming actions it didn't take).
+    
+    Uses keyword matching plus past/future tense analysis to reduce false positives
+    when the model describes what it *will* do vs. what it *has done*.
+    
+    Args:
+        response: Model's response text
+        user_message: Original user request
+        tools_used: List of tool names that were actually called
+        
+    Returns:
+        Tuple of (false_file, false_run) booleans
+    """
     msg_lower = user_message.lower()
     resp_lower = response.lower()
+    
+    # Check what the user requested
     needs_file = any(k in msg_lower for k in [
         "create", "write", "make", "build", "implement", "add", "generate",
     ])
-    needs_run  = any(k in msg_lower for k in ["run", "execute", "test"])
-    file_done  = any("write_file" in s or "patch_file" in s for s in tools_used)
+    needs_run = any(k in msg_lower for k in ["run", "execute", "test"])
+    
+    # Check what tools were actually called
+    file_done = any("write_file" in s or "patch_file" in s for s in tools_used)
     shell_done = any("shell" in s for s in tools_used)
-    false_file = needs_file and not file_done and any(p in resp_lower for p in [
-        "has been created", "was created", "have created",
-        "successfully created", "file has been", "has been written", "created the file",
-        "is already implemented", "already implemented", "capability is already",
-        "already exists", "is implemented in",
-    ])
+    
+    # Past tense claims (indicates action was supposedly completed)
+    past_tense_claims = [
+        "has been created", "was created", "have created", "i created",
+        "successfully created", "file has been", "has been written", 
+        "created the file", "is already implemented", "already implemented", 
+        "capability is already", "already exists", "is implemented in",
+        "i've created", "i have written", "i wrote", "i modified",
+        "i fixed", "i ran", "i executed", "i ran the", "i executed the",
+    ]
+    
+    # Future tense indicators (model describing what it will do, not what it did)
+    future_tense_indicators = [
+        "will create", "will write", "will make", "will build",
+        "going to create", "going to write", "going to run",
+        "let me create", "let me write", "let me run", "let me check",
+        "i'll create", "i will create", "i'll write", "i will write",
+        "i'll run", "i will run", "i'll fix", "i will fix",
+        "i can create", "i can write", "i can help",
+        "i should create", "i need to create", "i need to run",
+        "next i will", "then i will", "now i will",
+        "i'm going to", "i am going to",
+        "let's create", "let's write", "let's run",
+    ]
+    
+    # Check for past tense claims without corresponding tool calls
+    has_past_claim = any(claim in resp_lower for claim in past_tense_claims)
+    has_future_indicator = any(ind in resp_lower for ind in future_tense_indicators)
+    
+    # If model uses past tense but no tool was called, likely hallucination
+    # If model uses future tense, it's describing intent, not claiming completion
+    false_file = needs_file and not file_done and has_past_claim and not has_future_indicator
     false_run = needs_run and not shell_done and any(p in resp_lower for p in [
-        "run successfully", "executed successfully", "created and run", "ran successfully",
-    ])
+        "run successfully", "executed successfully", "created and run", 
+        "ran successfully", "i ran the", "i executed the",
+    ]) and not has_future_indicator
+    
     return false_file, false_run
 
 def build_system_prompt(message=""):

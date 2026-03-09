@@ -224,12 +224,13 @@ class LlamaServer:
 class ModelLoader:
     """
     Manages model loading and hot-swapping via llama-server.
-    
+
     Supports:
     - Load primary (7B) or secondary (1.5B) model
     - Unload current model
     - Hot-swap with cooldown
     - Track loaded model state
+    - LRU cache for quick model restart (SIGSTOP instead of kill)
     """
 
     def __init__(self):
@@ -237,6 +238,8 @@ class ModelLoader:
         self._server: Optional[LlamaServer] = None
         self._loaded_at: float = 0
         self._load_failures: int = 0
+        # LRU cache: keep stopped servers for quick restart
+        self._stopped_servers: dict[ModelType, LlamaServer] = {}
 
     def load_primary(self) -> bool:
         """Load the primary (7B) model."""
@@ -264,6 +267,26 @@ class ModelLoader:
                 self._load_failures += 1
                 return False
 
+            # Check if we have a cached server for this model type
+            if model_type in self._stopped_servers:
+                info(f"Resuming cached {model_type} model server...")
+                cached_server = self._stopped_servers[model_type]
+                # Resume the stopped process
+                try:
+                    import signal
+                    os.killpg(os.getpgid(cached_server.process.pid), signal.SIGCONT)
+                    time.sleep(0.5)  # Give it a moment to resume
+                    if cached_server._check_health():
+                        self._server = cached_server
+                        self._loaded_model = model_type
+                        self._loaded_at = time.time()
+                        del self._stopped_servers[model_type]
+                        success(f"Resumed {model_type} model from cache")
+                        return True
+                except Exception as e:
+                    warning(f"Failed to resume cached server: {e}")
+                    # Fall through to fresh start
+
             # Unload current model if different
             if self._loaded_model != model_type:
                 self.unload()
@@ -286,13 +309,28 @@ class ModelLoader:
             return False
 
     def unload(self):
-        """Unload the current model."""
+        """
+        Unload the current model.
+        
+        Instead of killing the process, uses SIGSTOP to pause it.
+        This allows quick restart without full reload delay.
+        """
         if self._server:
-            info(f"Unloading {self._loaded_model} model")
-            self._server.stop()
-            self._server = None
-            self._loaded_model = None
-            success("Model unloaded")
+            info(f"Pausing {self._loaded_model} model server (keeping in cache)...")
+            try:
+                import signal
+                # Pause the process instead of killing it
+                if self._server.process:
+                    os.killpg(os.getpgid(self._server.process.pid), signal.SIGSTOP)
+                # Store in cache for quick restart
+                self._stopped_servers[self._loaded_model] = self._server
+                success(f"{self._loaded_model} model paused and cached")
+            except Exception as e:
+                warning(f"Error pausing server (falling back to stop): {e}")
+                self._server.stop()
+            finally:
+                self._server = None
+                self._loaded_model = None
 
     def ensure_model(self, model_type: ModelType) -> bool:
         """Ensure a specific model is loaded."""

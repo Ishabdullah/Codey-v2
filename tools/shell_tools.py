@@ -1,12 +1,38 @@
 import subprocess
 from pathlib import Path
-from utils.logger import warning, confirm as ask_confirm
+from utils.logger import warning, confirm as ask_confirm, error
 from utils.config import AGENT_CONFIG
 
 # Commands that always require confirmation unless in YOLO mode
 DANGEROUS_COMMANDS = [
     "rm", "rmdir", "mkfs", "dd", "chmod", "wget", "curl", "mv", "cp",
 ]
+
+# Shell metacharacters that enable sub-shell injection
+SHELL_METACHARACTERS = [';', '&&', '||', '|', '`', '$(', '${', '<(', '>(']
+
+def validate_command_structure(command: str) -> tuple[bool, str]:
+    """
+    Validate command structure to prevent sub-shell injection.
+    
+    Checks for dangerous shell metacharacters that could enable:
+    - Command chaining (;, &&, ||)
+    - Piping to other commands (|)
+    - Command substitution (``, $(), ${})
+    - Process substitution (<(), >())
+    
+    Args:
+        command: The shell command to validate
+        
+    Returns:
+        Tuple of (is_valid, error_message)
+        If valid: (True, "")
+        If invalid: (False, "description of blocked pattern")
+    """
+    for char in SHELL_METACHARACTERS:
+        if char in command:
+            return False, f"Shell metacharacter '{char}' not allowed (prevents injection)"
+    return True, ""
 
 def is_dangerous(command: str) -> bool:
     cmd_parts = command.split()
@@ -21,13 +47,29 @@ def is_dangerous(command: str) -> bool:
     dangerous_patterns = ["sudo ", "> /dev/", "| sh", "| bash", ":(){:|:&};:"]
     return any(p in cmd_lower for p in dangerous_patterns)
 
-def shell(command: str, yolo: bool = False, timeout: int = 30) -> str:
+def shell(command: str, yolo: bool = False, timeout: int = 30, skip_structure_check: bool = False) -> str:
     """
     Execute a shell command. Returns combined stdout + stderr.
     Prompts for confirmation on dangerous or any command if confirm_shell=True.
-    """
-    should_confirm = False
     
+    Args:
+        command: The shell command to execute
+        yolo: Skip confirmation prompts
+        timeout: Command timeout in seconds
+        skip_structure_check: Skip shell metacharacter validation (for trusted callers)
+        
+    Returns:
+        Command output or error message
+    """
+    # Validate command structure (prevent sub-shell injection)
+    if not skip_structure_check:
+        is_valid, error_msg = validate_command_structure(command)
+        if not is_valid:
+            error(f"Blocked unsafe command: `{command}`")
+            return f"[ERROR] Command blocked: {error_msg}"
+    
+    should_confirm = False
+
     if is_dangerous(command):
         warning(f"Potentially dangerous command: `{command}`")
         should_confirm = True

@@ -11,12 +11,18 @@ Codey-v2 transforms Codey-v2 from a session-based CLI tool into a continuous AI 
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v2.0.0 · Persistent AI Agent · Termux
+  v2.1.0 · Persistent AI Agent · Termux
 ```
 
 ---
 
 ## Key Features
+
+### 🛡️ Security Hardening (v2.1.0)
+- **Shell Injection Prevention**: Blocks `;`, `&&`, `||`, `|`, backticks, `$()`, `${}`, `<()`, `>()`
+- **Self-Modification Opt-In**: Requires `--allow-self-mod` flag or `ALLOW_SELF_MOD=1` env var
+- **Checkpoint Enforcement**: Auto-creates checkpoint before modifying core files
+- **Workspace Boundaries**: Files outside workspace blocked unless self-mod enabled
 
 ### 🔄 Persistent Daemon
 - Runs continuously in the background
@@ -34,11 +40,12 @@ Codey-v2 transforms Codey-v2 from a session-based CLI tool into a continuous AI 
 - **Primary**: Qwen2.5-Coder-7B for complex tasks
 - **Secondary**: Qwen2.5-1.5B for simple queries
 - Automatic routing based on input complexity
-- 30-second cooldown to prevent thrashing
+- **LRU Cache**: SIGSTOP/SIGCONT for quick restart (reduces 2-3s swap delay)
 
 ### 📋 Internal Planning
 - Native task queue with dependency tracking
 - Automatic task breakdown for complex requests
+- **Conversational Filters**: Q&A queries don't trigger unnecessary planning
 - Strategy adaptation on failure
 - Background task scheduling
 
@@ -65,6 +72,11 @@ Codey-v2 transforms Codey-v2 from a session-based CLI tool into a continuous AI 
 - `write_file` fails → try `patch_file`
 - Import error → suggest installation
 - Test failure → debug with targeted fixes
+
+### 🎯 Improved Reliability (v2.1.0)
+- **JSON Parser**: Better escape sequence handling (`\n`, `\t`, `\"`, `\\`)
+- **Hallucination Detection**: Past/future tense analysis reduces false positives
+- **Context Budget**: 4000 token cap prevents context overflow on large projects
 
 ---
 
@@ -189,6 +201,30 @@ codeyd2 status
 | `codey2 task <id>` | Get details of a specific task |
 | `codey2 cancel <id>` | Cancel a pending/running task |
 | `codey2 --daemon` | Run in foreground daemon mode |
+
+### CLI Flags
+
+| Flag | Description |
+|------|-------------|
+| `--yolo` | Skip all confirmations |
+| `--allow-self-mod` | Enable self-modification (with checkpoint enforcement) |
+| `--threads N` | Override thread count |
+| `--ctx N` | Override context window size |
+| `--read <file>` | Pre-load file into context |
+| `--init` | Generate CODEY.md and exit |
+| `--fix <file>` | Run file, auto-fix any errors |
+| `--tdd <file>` | TDD mode with test file |
+| `--no-resume` | Start fresh (ignore saved session) |
+| `--plan` | Enable plan mode for complex tasks |
+| `--no-plan` | Disable orchestration/planning |
+
+### Environment Variables
+
+| Variable | Description |
+|----------|-------------|
+| `ALLOW_SELF_MOD=1` | Enable self-modification (alternative to `--allow-self-mod`) |
+| `CODEY_MODEL` | Override model path |
+| `CODEY_THREADS` | Override thread count |
 
 ---
 
@@ -724,8 +760,40 @@ ls -la ~/models/qwen2.5-1.5b/
 
 | Version | Highlights |
 |---------|------------|
+| **v2.1.0** | **Security & Reliability Hardening** - Shell injection prevention, self-mod opt-in, LRU model cache, JSON parser improvements, hallucination detection, orchestration filters, context budget |
 | **v2.0.0** | **Complete 7-phase implementation** - Daemon, Memory, Dual-Model, Planner, Checkpoints, Observability, Recovery |
 | v1.0.0 | Original Codey - Session-based CLI with ReAct agent |
+
+---
+
+## Testing
+
+Codey-v2 includes a comprehensive test suite:
+
+```bash
+# Run all tests
+pytest tests/ -v
+
+# Run security tests
+pytest tests/security/ -v
+
+# Run specific test modules
+pytest tests/test_shell_injection.py -v
+pytest tests/test_hallucination.py -v
+pytest tests/test_orchestration.py -v
+pytest tests/test_json_parser.py -v
+pytest tests/test_self_modification.py -v
+```
+
+### Test Coverage
+
+| Module | Tests | Coverage |
+|--------|-------|----------|
+| Shell Injection | 16 | Command validation, metacharacter blocking |
+| Self-Modification | 8 | Opt-in enforcement, checkpoint creation |
+| JSON Parser | 16 | Escape handling, malformed input recovery |
+| Hallucination Detection | 18 | Past/future tense analysis |
+| Orchestration | 24 | Conversational filters, complexity heuristics |
 
 ---
 

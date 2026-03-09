@@ -28,6 +28,13 @@ Codey-v2 is a local AI coding assistant for Termux that runs Qwen2.5-Coder-7B-In
 - Skip confirms: codey-v2 --yolo "task"
 - Pre-load file: codey-v2 --read file.py "task"
 - Generate memory: codey-v2 --init
+- Self-modify: codey-v2 --allow-self-mod "task" (enables modifying Codey's own source)
+
+# Security Features
+- Shell command validation: Blocks injection via `;`, `&&`, `||`, `|`, backticks, `$()`
+- Self-modification opt-in: Requires `--allow-self-mod` or `ALLOW_SELF_MOD=1` env var
+- Checkpoint enforcement: Auto-creates checkpoint before modifying core files
+- Workspace boundary: Files outside workspace blocked unless self-mod enabled
 
 # Conventions
 - Tool calls use <tool>{"name": "...", "args": {...}}</tool> format
@@ -35,9 +42,12 @@ Codey-v2 is a local AI coding assistant for Termux that runs Qwen2.5-Coder-7B-In
 - Confirmations on by default, disabled with --yolo
 - Context window: 1024 tokens (mobile RAM constraint)
 - All files written to cwd unless absolute path given
+- Model hot-swap: 7B for complex tasks, 1.5B for simple (cached for quick restart)
 
 # Notes
 - Model loads in ~15s on first query, stays hot for session
 - If phone crashes: reduce n_ctx in utils/config.py to 512
 - CODEY_MODEL env var overrides model path
 - CODEY_THREADS env var overrides thread count
+- ALLOW_SELF_MOD=1 env var enables self-modification (alternative to --allow-self-mod)
+- Checkpoints stored in ~/.codey-v2/checkpoints/

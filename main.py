@@ -41,14 +41,25 @@ def parse_args():
     parser.add_argument("--no-plan", action="store_true", help="Disable orchestration/planning for complex tasks")
     parser.add_argument("--daemon",     action="store_true", help="Run in daemon mode (v2 feature)")
     parser.add_argument("--no-resume",  action="store_true", help="Start fresh, ignore saved session")
+    parser.add_argument("--allow-self-mod", action="store_true", help="Allow self-modification with checkpoint enforcement")
     return parser.parse_args()
 
 def apply_overrides(args):
+    import os
     from utils import config
+    from utils.logger import info
+    
     if args.yolo:
         config.AGENT_CONFIG["confirm_shell"] = False
         config.AGENT_CONFIG["confirm_write"] = False
         info("YOLO mode: confirmations disabled.")
+    
+    # Check for self-modification enablement (CLI flag or env var)
+    allow_self_mod = args.allow_self_mod or os.environ.get("ALLOW_SELF_MOD", "0") == "1"
+    if allow_self_mod:
+        config.AGENT_CONFIG["allow_self_modification"] = True
+        info("Self-modification enabled: Codey can modify its own source files (with checkpoints).")
+    
     if args.threads:
         config.MODEL_CONFIG["n_threads"] = args.threads
     if args.ctx:
@@ -372,13 +383,19 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
   /exit                  Save session and quit
 
 [bold]CLI flags:[/bold]
-  codey-v2 "task"           One-shot
-  codey-v2 --chat "task"    Chat with prefilled prompt
-  codey-v2 --yolo "task"    Skip all confirmations
-  codey-v2 --fix file.py    Run file, auto-fix any errors
-  codey-v2 --read file.py   Pre-load file into context
-  codey-v2 --init           Generate CODEY.md and exit
-  codey-v2 --no-resume      Start fresh (ignore saved session)
+  codey-v2 "task"              One-shot
+  codey-v2 --chat "task"       Chat with prefilled prompt
+  codey-v2 --yolo "task"       Skip all confirmations
+  codey-v2 --fix file.py       Run file, auto-fix any errors
+  codey-v2 --read file.py      Pre-load file into context
+  codey-v2 --init              Generate CODEY.md and exit
+  codey-v2 --no-resume         Start fresh (ignore saved session)
+  codey-v2 --allow-self-mod    Enable self-modification (with checkpoints)
+
+[bold]Environment variables:[/bold]
+  ALLOW_SELF_MOD=1             Enable self-modification (alternative to flag)
+  CODEY_MODEL                  Override model path
+  CODEY_THREADS                Override thread count
         """)
         return True, history
 

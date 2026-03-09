@@ -10,16 +10,24 @@ Snapshots handled by Filesystem class.
 from pathlib import Path
 from typing import List, Union
 from core.filesystem import Filesystem, get_filesystem, FilesystemAccessError
+from utils.config import AGENT_CONFIG
 
 # Global filesystem instance
 _fs: Filesystem = None
+_fs_allow_self_mod: bool = False
 
 
 def _get_fs() -> Filesystem:
     """Get or create filesystem instance."""
-    global _fs
-    if _fs is None:
-        _fs = get_filesystem()
+    global _fs, _fs_allow_self_mod
+    
+    # Check if allow_self_modification setting changed
+    allow_self_mod = AGENT_CONFIG.get("allow_self_modification", False)
+    
+    if _fs is None or _fs_allow_self_mod != allow_self_mod:
+        _fs = get_filesystem(allow_self_modification=allow_self_mod)
+        _fs_allow_self_mod = allow_self_mod
+    
     return _fs
 
 

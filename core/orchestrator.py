@@ -6,9 +6,9 @@ from pathlib import Path
 from core.taskqueue import TaskQueue, STATUS_PENDING, STATUS_RUNNING
 from utils.logger import info, warning
 
-PLAN_PROMPT = """Break the task into 2-5 numbered steps. Max 5 steps. 
-Each step must be a single concrete action: create a file, edit a file, or run a command. 
-NEVER include steps like "open in editor", "save file", "navigate to directory", "review code", or "think about structure". 
+PLAN_PROMPT = """Break the task into 2-5 numbered steps. Max 5 steps.
+Each step must be a single concrete action: create a file, edit a file, or run a command.
+NEVER include steps like "open in editor", "save file", "navigate to directory", "review code", or "think about structure".
 Output ONLY the numbered list of actions."""
 
 COMPLEX_SIGNALS = [
@@ -18,41 +18,73 @@ COMPLEX_SIGNALS = [
     'with tests', 'and test', 'and run',
 ]
 
+# Conversational patterns that should NOT trigger orchestration
+CONVERSATIONAL_PATTERNS = [
+    "how do i", "what is", "can you explain", "tell me about",
+    "what's the best way", "should i use", "difference between",
+    "explain how", "what does", "how does", "why does",
+    "can you help me", "could you explain", "i need help",
+    "what's the difference", "how to use", "how do you",
+]
+
 def is_complex(message):
-    """Heuristic: does this need multiple steps?"""
-    msg = message.lower()
+    """
+    Heuristic: does this need multiple steps?
     
-    # Negative signals: questions/conversations should NOT trigger orchestration
+    Uses keyword matching, conversational pattern detection, and message length
+    to determine if a request should trigger orchestration.
+    
+    Args:
+        message: User's request text
+        
+    Returns:
+        True if request should be orchestrated, False otherwise
+    """
+    msg = message.lower()
+
+    # Action keywords that indicate a task (not a question)
     _action_kws = [
         "create", "write", "make", "build", "edit", "fix", "run", "execute",
         "install", "add", "delete", "remove", "update", "patch", "refactor",
         "implement", "generate", "rewrite",
     ]
     _has_action = any(k in msg for k in _action_kws)
+    
+    # Question starters that indicate Q&A (not a task)
     _question_starters = (
         "what", "why", "how", "when", "where", "who", "which",
         "is ", "are ", "do ", "does ", "can ", "could ", "would ",
         "should ", "will ", "was ", "were ", "has ", "have ",
     )
     _qa_phrases = ["tell me", "explain", "help me understand", "what can you"]
+    
+    # If no action keyword AND looks like a question, NOT complex
     if not _has_action and (
         msg.endswith("?") or
         msg.startswith(_question_starters) or
         any(k in msg for k in _qa_phrases)
     ):
         return False
-        
+    
+    # Check for conversational patterns (even with action keywords)
+    if any(pattern in msg for pattern in CONVERSATIONAL_PATTERNS):
+        return False
+    
+    # Short messages are rarely complex
     if len(message) < 50:
         return False
-        
+
     # Count positive signals
     signals = sum(1 for s in COMPLEX_SIGNALS if s in msg)
-    
-    # A long message alone isn't complex, it needs signals
+
+    # Scale threshold by message length
+    # Longer messages need fewer signals to be considered complex
     if len(message) > 300:
         return signals >= 2
-        
-    return signals >= 3
+    elif len(message) > 150:
+        return signals >= 3
+    else:
+        return signals >= 4
 
 def parse_task_list(model_output):
     """Extract numbered steps from model output."""
