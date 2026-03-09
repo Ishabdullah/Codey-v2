@@ -350,6 +350,45 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
                 error(f"Could not update .codeyignore: {e}")
         return True, history
 
+    if low == "/learning":
+        from core.learning import get_learning_manager
+        learning = get_learning_manager()
+        status = learning.get_status()
+        
+        console.print("\n[bold]Learning System Status[/bold]\n")
+        
+        # Preferences
+        console.print("[bold cyan]Preferences:[/bold cyan]")
+        prefs = status["preferences"]["preferences"]
+        if prefs:
+            for key, value in prefs.items():
+                conf = status["preferences"]["confidence"].get(key, 0)
+                bar = "█" * int(conf * 10) + "░" * (10 - int(conf * 10))
+                console.print(f"  {key}: [green]{value}[/green] [{bar}]")
+        else:
+            console.print("  [dim]No preferences learned yet[/dim]")
+        
+        # Errors
+        console.print("\n[bold cyan]Error Database:[/bold cyan]")
+        console.print(f"  Patterns: {status['errors']['total_patterns']}")
+        console.print(f"  Occurrences: {status['errors']['total_occurrences']}")
+        console.print(f"  Fixed: {status['errors']['total_fixed']}")
+        console.print(f"  Success Rate: {status['errors']['success_rate']}")
+        
+        # Strategies
+        console.print("\n[bold cyan]Strategy Tracker:[/bold cyan]")
+        console.print(f"  Strategies: {status['strategies']['total_strategies']}")
+        console.print(f"  Total Attempts: {status['strategies']['total_attempts']}")
+        console.print(f"  Overall Success: {status['strategies']['overall_success_rate']:.1f}%")
+        
+        top = status['strategies'].get('top_strategies', [])
+        if top:
+            console.print("  [dim]Top Strategies:[/dim]")
+            for s in top[:3]:
+                console.print(f"    {s['name']}: {s['success_rate']*100:.0f}% ({s['attempts']} attempts)")
+        
+        return True, history
+
     if low == "/help":
         console.print("""
 [bold]File commands:[/bold]
@@ -381,6 +420,9 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
   /sessions              List all saved sessions
   /clear                 Clear history, context, undo, session
   /exit                  Save session and quit
+
+[bold]Learning:[/bold]
+  /learning              Show learning system status (v2.2.0)
 
 [bold]CLI flags:[/bold]
   codey-v2 "task"              One-shot

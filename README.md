@@ -11,12 +11,19 @@ Codey-v2 transforms Codey-v2 from a session-based CLI tool into a continuous AI 
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v2.1.0 · Persistent AI Agent · Termux
+  v2.2.0 · Learning AI Agent · Termux
 ```
 
 ---
 
 ## Key Features
+
+### 🧠 Machine Learning (v2.2.0)
+- **User Preference Learning**: Automatically learns your coding style (test framework, naming, imports)
+- **Error Pattern Database**: Remembers errors and fixes - suggests solutions for similar errors
+- **Strategy Tracking**: Learns which recovery strategies work best over time
+- **Adaptive Behavior**: Gets smarter with each interaction
+- `/learning` command to view learned preferences and statistics
 
 ### 🛡️ Security Hardening (v2.1.0)
 - **Shell Injection Prevention**: Blocks `;`, `&&`, `||`, `|`, backticks, `$()`, `${}`, `<()`, `>()`
@@ -760,6 +767,7 @@ ls -la ~/models/qwen2.5-1.5b/
 
 | Version | Highlights |
 |---------|------------|
+| **v2.2.0** | **Machine Learning** - User preference learning, error pattern database, strategy effectiveness tracking, adaptive behavior |
 | **v2.1.0** | **Security & Reliability Hardening** - Shell injection prevention, self-mod opt-in, LRU model cache, JSON parser improvements, hallucination detection, orchestration filters, context budget |
 | **v2.0.0** | **Complete 7-phase implementation** - Daemon, Memory, Dual-Model, Planner, Checkpoints, Observability, Recovery |
 | v1.0.0 | Original Codey - Session-based CLI with ReAct agent |
@@ -794,6 +802,7 @@ pytest tests/test_self_modification.py -v
 | JSON Parser | 16 | Escape handling, malformed input recovery |
 | Hallucination Detection | 18 | Past/future tense analysis |
 | Orchestration | 24 | Conversational filters, complexity heuristics |
+| **Learning Systems** | **25** | **Preferences, error database, strategy tracking** |
 
 ---
 

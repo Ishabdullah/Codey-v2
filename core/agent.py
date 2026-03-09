@@ -1,18 +1,30 @@
 import json
 import re
+import time
 from core.inference_v2 import infer
 from core.context import build_file_context_block, auto_load_from_prompt, list_loaded
 from core.project import get_project_summary
 from core.codeymd import read_codeymd, find_codeymd
 from core.summarizer import should_summarize, summarize_history
 from core.tokens import get_context_usage, usage_bar
+from core.learning import get_learning_manager
 from prompts.system_prompt import SYSTEM_PROMPT
 from tools.file_tools import tool_read_file, tool_write_file, tool_append_file, tool_list_dir
 from tools.patch_tools import tool_patch_file
 from tools.shell_tools import shell, search_files
-from utils.logger import tool_call, tool_result, warning, separator, info
+from utils.logger import tool_call, tool_result, warning, separator, info, success
 from utils.config import AGENT_CONFIG
 from core.display import show_file_write, show_patch, show_shell, show_tool_generic, show_response
+
+# Learning manager for adaptive behavior
+_learning = None
+
+def _get_learning():
+    """Get learning manager singleton."""
+    global _learning
+    if _learning is None:
+        _learning = get_learning_manager()
+    return _learning
 
 TOOLS = {
     "read_file":    lambda args: tool_read_file(args["path"]),
@@ -164,10 +176,23 @@ def parse_tool_call(text):
     return None
 
 def execute_tool(tool_dict):
+    """
+    Execute a tool call with learning integration.
+    
+    Learns from:
+    - File operations (for preference learning)
+    - Errors (for error database)
+    - Strategy effectiveness (for adaptive recovery)
+    """
     name = tool_dict.get("name", "")
     args = tool_dict.get("args", {})
+    learning = _get_learning()
+    
     if name not in TOOLS:
         return "[ERROR] Unknown tool: " + name
+    
+    start_time = time.time()
+    
     try:
         # Get old content before write for diff display
         old_content = None
@@ -177,7 +202,18 @@ def execute_tool(tool_dict):
             if p.exists():
                 try: old_content = p.read_text()
                 except: pass
+        
         result = TOOLS[name](args)
+        duration = time.time() - start_time
+        
+        # Learn from successful file operations
+        if name in ("write_file", "patch_file") and not result.startswith("[ERROR]"):
+            # Learn preferences from generated content
+            content = args.get("content", "")
+            path = args.get("path", "")
+            if content and path:
+                learning.learn_from_file(path, content)
+        
         # Display using Claude Code style panels
         if name == "write_file":
             show_file_write(args.get("path",""), args.get("content",""), old_content)
@@ -188,9 +224,21 @@ def execute_tool(tool_dict):
             show_shell(args.get("command",""), result, error=is_err)
         elif name != "read_file":
             show_tool_generic(name, args, result)
+        
         return result
+        
     except Exception as e:
-        return "[ERROR] " + str(e)
+        duration = time.time() - start_time
+        error_msg = str(e)
+        
+        # Learn from errors
+        error_type = type(e).__name__
+        learning.record_error(error_type, error_msg, {
+            "tool": name,
+            "args": args,
+        })
+        
+        return "[ERROR] " + error_msg
 
 def is_error(result, tool_name):
     if not isinstance(result, str):
