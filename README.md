@@ -37,6 +37,72 @@ Codey-v2 transforms Codey-v2 from a session-based CLI tool into a continuous AI 
 - **Self-Modification Opt-In**: Requires `--allow-self-mod` flag or `ALLOW_SELF_MOD=1` env var
 - **Checkpoint Enforcement**: Auto-creates checkpoint before modifying core files
 - **Workspace Boundaries**: Files outside workspace blocked unless self-mod enabled
+- ## 🔒 Security Considerations
+
+Codey-v2 is a **persistent, autonomous coding agent** that runs as a background daemon in Termux (or Linux), maintains long-term memory, executes shell commands via tools, supports self-modification (opt-in), and loads/runs local LLMs. These capabilities make it powerful but introduce non-trivial security risks compared to simple chat-based local LLMs.
+
+**This is early-stage open-source software — use with caution, especially on devices with sensitive data.** Always review generated code/commands before execution, keep your device physically secure, and consider running in a restricted environment (e.g., dedicated Termux instance or container).
+
+### Key Risks & Mitigations
+
+1. **Persistent Daemon & Background Execution**  
+   - The daemon (`codeyd2`) runs continuously with a Unix socket for IPC (`codey-v2.sock`).  
+   - **Risk**: If the socket file has permissive permissions or is in a shared location, unauthorized local processes could potentially send commands.  
+   - **Mitigations**: Socket created with 0600 permissions (owner-only); daemon runs under your Termux/Linux user (no root required). Stop the daemon when not in use (`codeyd2 stop`). Monitor with `codeyd2 status` or `ps`.  
+   - **Recommendation**: Only start on trusted devices; avoid public/multi-user environments.
+
+2. **Shell Command Execution & Tool Use**  
+   - Tools can execute shell commands (e.g., file ops, git, etc.) based on agent decisions.  
+   - **Risk**: Prompt injection or hallucinated/malicious output could lead to unintended commands (e.g., `rm -rf`, data exfiltration if network tools added later).  
+   - **Mitigations**: Aggressive shell injection prevention (blocks `;`, `&&`, `||`, `|`, backticks, `\( ()`, ` \){}`, `<()`, `>()`, etc.); commands run in user context only. User must confirm high-risk actions in most flows (expandable).  
+   - **Recommendation**: Always review `--plan` output before execution; use `--no-execute` flag for dry runs.
+
+3. **Self-Modification & Code Alteration**  
+   - Opt-in feature allows the agent to patch its own code/files.  
+   - **Risk**: If enabled and tricked (via clever prompts or bugs), it could introduce backdoors, delete data, or escalate damage persistently.  
+   - **Mitigations**:  
+     - Requires explicit `--allow-self-mod` flag **or** `ALLOW_SELF_MOD=1` env var.  
+     - Auto-creates checkpoints + full backups before core changes.  
+     - Git integration for versioning/rollback.  
+     - Workspace boundaries enforced (outside files blocked unless self-mod active).  
+   - **Recommendation**: Keep disabled by default. Only enable for experimentation; review diffs/checkpoints immediately after any mod.
+
+4. **Memory & State Persistence**  
+   - Hierarchical memory (SQLite for episodic/project state, embeddings for long-term).  
+   - **Risk**: Sensitive code snippets, API keys (if you add tools), or personal data could be stored and potentially leaked if device compromised or backups mishandled.  
+   - **Mitigations**: Data stored in Termux app-private dirs (`\~/.codey-v2/`); no encryption yet (planned). No automatic exfiltration.  
+   - **Recommendation**: Avoid feeding sensitive info; periodically review/delete state (`codey2 memory clear` or manual rm).
+
+5. **Model Loading & Fine-Tuning**  
+   - Loads external GGUF files; supports importing LoRA adapters from fine-tuning.  
+   - **Risk**: Malicious/poisoned models/adapters could cause denial-of-service (OOM), unexpected behavior, or (theoretically) exploits if GGUF parsing has vulns.  
+   - **Mitigations**: Models downloaded manually by user; no auto-download. Use trusted sources (Hugging Face official).  
+   - **Recommendation**: Verify model hashes; run on isolated devices for testing untrusted adapters.
+
+6. **General Android/Termux Risks**  
+   - Runs with Termux permissions (storage, potentially network if tools expanded).  
+   - **Risk**: Device-wide compromise if agent exploited (e.g., via generated malware code). Thermal/resource abuse possible on long runs.  
+   - **Mitigations**: CPU-only inference; built-in thermal throttling (warnings + thread reduction). No root needed.  
+   - **Recommendation**: Use on secondary/test device first; monitor battery/CPU with `top` or Android settings.
+
+### Current Hardening Summary (v2.1.0+)
+- Shell metacharacter blocking  
+- Opt-in self-mod with checkpoints/git/rollback  
+- Workspace/file boundary enforcement  
+- Observability (`codey2 status`, health checks)  
+- No network calls by default (fully local)  
+- Audit report example in repo (`audit_report_2026-03-09_12-00-00.md`)
+
+### Future Improvements (Help Wanted!)
+- Encrypted memory/state storage  
+- Runtime sandboxing (e.g., bubblewrap/seccomp on Linux, better Termux isolation)  
+- Command confirmation prompts for more actions  
+- Model signature/hash verification  
+- Audit logs + anomaly detection
+
+**Transparency is key** — the full source is open; feel free to audit, open issues, or submit PRs for hardening. If you spot vulnerabilities, report responsibly (DM or issue with security label). Contributions to security features are especially welcome!
+
+**Use at your own risk.** This project is experimental — no warranties. Start small, monitor closely, and disable risky features until you're comfortable.
 
 ### 🔄 Persistent Daemon
 - Runs continuously in the background
