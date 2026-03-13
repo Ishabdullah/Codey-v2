@@ -220,41 +220,61 @@ class EmbeddingStore:
     
     def search(self, query_embedding: bytes, limit: int = 5) -> List[Dict]:
         """
-        Search for similar embeddings.
+        Search for similar embeddings using cosine similarity.
         
-        Note: SQLite doesn't have native vector similarity.
-        For production, use a vector database like Chroma or FAISS.
-        This is a basic implementation that returns recent embeddings.
+        Loads all stored embeddings, computes cosine similarity
+        against the query vector in Python, and returns the top
+        results ranked by similarity score.
         
         Args:
-            query_embedding: Pickled query embedding
+            query_embedding: Pickled numpy query embedding
             limit: Maximum results to return
             
         Returns:
-            List of matching embeddings with metadata
+            List of matching embeddings with metadata and similarity score
         """
+        try:
+            import numpy as np
+            query_vec = pickle.loads(query_embedding)
+            query_norm = np.linalg.norm(query_vec)
+            if query_norm == 0:
+                return []
+        except Exception as e:
+            error(f"Failed to load query embedding: {e}")
+            return []
+
         conn = self._get_connection()
         try:
             cursor = conn.cursor()
-            # Basic search - returns most recent embeddings
-            # For real semantic search, need vector DB with cosine similarity
             cursor.execute("""
-                SELECT id, file_path, chunk_start, chunk_end, created_at
+                SELECT id, file_path, chunk_start, chunk_end, embedding, created_at
                 FROM longterm_embeddings
-                ORDER BY created_at DESC
-                LIMIT ?
-            """, (limit,))
-            
-            results = []
+            """)
+
+            scored = []
             for row in cursor.fetchall():
-                results.append({
-                    "id": row["id"],
-                    "file_path": row["file_path"],
-                    "chunk_start": row["chunk_start"],
-                    "chunk_end": row["chunk_end"],
-                    "created_at": row["created_at"],
-                })
-            return results
+                try:
+                    import numpy as np
+                    vec = pickle.loads(row["embedding"])
+                    vec_norm = np.linalg.norm(vec)
+                    if vec_norm == 0:
+                        continue
+                    score = float(np.dot(query_vec, vec) / (query_norm * vec_norm))
+                    scored.append((score, {
+                        "id": row["id"],
+                        "file_path": row["file_path"],
+                        "chunk_start": row["chunk_start"],
+                        "chunk_end": row["chunk_end"],
+                        "created_at": row["created_at"],
+                        "similarity": round(score, 4),
+                    }))
+                except Exception:
+                    continue
+
+            # Sort by similarity descending, return top results
+            scored.sort(key=lambda x: x[0], reverse=True)
+            return [item for _, item in scored[:limit]]
+
         finally:
             conn.close()
     
