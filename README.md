@@ -1,7 +1,8 @@
 # Codey-v2
 
-**A persistent, daemon-like AI agent that lives on your device.**
 **⚠️ Powerful on-device agent – persistent & adaptive. Know what you're doing – see Security Considerations below.**
+
+**A persistent, daemon-like AI agent that lives on your device.**
 
 Codey-v2 transforms Codey-v2 from a session-based CLI tool into a continuous AI agent—maintaining state, managing background tasks, and adapting to work without constant supervision. All while running locally on your Android device with dual-model hot-swap for thermal and memory efficiency.
 
