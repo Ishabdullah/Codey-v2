@@ -367,7 +367,7 @@ class PreferenceManager:
         """
         found = {}
         msg_lower = message.lower()
-        for pattern, category, value_spec in PreferenceDetector.NL_PATTERNS:
+        for pattern, category, value_spec in PreferenceManager.NL_PATTERNS:
             m = re.search(pattern, msg_lower)
             if m:
                 value = m.group(value_spec) if isinstance(value_spec, int) else value_spec

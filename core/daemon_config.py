@@ -87,7 +87,7 @@ class DaemonConfig:
     def get(self, *keys: str, default: Any = None) -> Any:
         """
         Get a configuration value by nested keys.
-        
+
         Example: config.get("daemon", "log_level")
         """
         current = self._config
@@ -96,6 +96,10 @@ class DaemonConfig:
                 current = current[key]
             else:
                 return default
+        
+        # Expand tilde paths for string values
+        if isinstance(current, str) and current.startswith("~"):
+            return str(Path(current).expanduser())
         return current
     
     def set(self, *keys: str, value: Any):

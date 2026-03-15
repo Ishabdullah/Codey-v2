@@ -218,57 +218,6 @@ PYEOF
     fi
 fi
 
-# Check for status command (full observability status)
-if [ "$1" = "status" ]; then
-    if ! is_daemon_running; then
-        echo "Codey-v2 daemon is not running"
-        exit 1
-    fi
-    
-    TMPSCRIPT="$(mktemp "$DAEMON_DIR/status_full_XXXX.py")"
-    
-    cat > "$TMPSCRIPT" << PYEOF
-import sys
-sys.path.insert(0, '$CODEY_V2_DIR')
-
-from core.observability import get_state
-
-state = get_state()
-status = state.get_full_status()
-
-print("=" * 50)
-print("Codey-v2 Status")
-print("=" * 50)
-print()
-print(f"Version:  {status['version']}")
-print(f"PID:      {status['daemon']['pid']}")
-print(f"Uptime:   {status['daemon']['uptime_seconds']}s")
-print()
-print("Model:")
-print(f"  Active:       {status['model']['active'] or 'None'}")
-print(f"  Temperature:  {status['model']['temperature']}")
-print(f"  Context:      {status['model']['context_size']}")
-print()
-print("Tasks:")
-print(f"  Pending:  {status['tasks']['pending']}")
-print(f"  Running:  {status['tasks']['running']}")
-print()
-print("Memory:")
-print(f"  RSS:        {status['memory']['usage'].get('rss_mb', 'N/A')} MB")
-print(f"  Files:      {status['memory']['loaded'].get('working', {}).get('files', 0)}")
-print()
-print("Health:")
-health = status['health']
-print(f"  CPU:        {health.get('cpu_usage', 'N/A')}%")
-print(f"  Model:      {'Loaded' if health.get('model_loaded') else 'Not loaded'}")
-print()
-print("=" * 50)
-PYEOF
-    
-    python3 "$TMPSCRIPT"
-    rm -f "$TMPSCRIPT"
-    exit $?
-fi
 
 # Check for task command
 if [ "$1" = "task" ]; then

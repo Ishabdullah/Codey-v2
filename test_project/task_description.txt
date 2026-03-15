@@ -1,6 +1,0 @@
-Build a simple Flask REST API for a todo list application with the following features:
-1. Create a Flask app in app.py
-2. Add endpoints: GET /todos, POST /todos, GET /todos/<id>, DELETE /todos/<id>
-3. Use an in-memory list for storage
-4. Include proper error handling for 404 responses
-5. Create a requirements.txt file

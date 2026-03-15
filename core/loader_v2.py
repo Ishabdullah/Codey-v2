@@ -54,7 +54,13 @@ class LlamaServer:
             if self.process and self.process.poll() is None:
                 # Already running
                 return True
-            
+
+            # Check if llama-server is already running on port 8080 (e.g., from daemon)
+            if self._is_port_in_use():
+                info(f"llama-server already running on port {self.port}, using existing server")
+                self._started = True
+                return True
+
             info(f"Starting llama-server for {self.model_type} model...")
             
             # Build command
@@ -130,25 +136,35 @@ class LlamaServer:
             return False
     
     def stop(self):
-        """Stop llama-server subprocess."""
         if self.process:
             try:
-                info(f"Stopping llama-server for {self.model_type} model...")
-                # Kill process group
-                if os.name != 'nt':
-                    os.killpg(os.getpgid(self.process.pid), signal.SIGTERM)
+                import signal as _signal
+                if os.name != "nt":
+                    try:
+                        os.killpg(os.getpgid(self.process.pid), _signal.SIGTERM)
+                    except ProcessLookupError:
+                        self.process.terminate()
                 else:
                     self.process.terminate()
-                self.process.wait(timeout=5)
-                success("llama-server stopped")
+                try:
+                    self.process.wait(timeout=8)
+                except subprocess.TimeoutExpired:
+                    if os.name != "nt":
+                        try:
+                            os.killpg(os.getpgid(self.process.pid), _signal.SIGKILL)
+                        except Exception:
+                            self.process.kill()
+                    else:
+                        self.process.kill()
             except Exception as e:
-                warning(f"Error stopping llama-server: {e}")
-                if self.process:
+                try:
                     self.process.kill()
+                except Exception:
+                    pass
             finally:
                 self.process = None
                 self._started = False
-    
+
     def _check_health(self) -> bool:
         """Check if server is responding."""
         try:
@@ -157,10 +173,30 @@ class LlamaServer:
                 return response.status == 200
         except:
             return False
-    
+
+    def _is_port_in_use(self) -> bool:
+        """Check if port 8080 is already in use by another llama-server instance."""
+        import socket
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1.0)
+            result = sock.connect_ex((SERVER_HOST, self.port))
+            sock.close()
+            # If port is open, check if it's actually llama-server responding
+            if result == 0:
+                try:
+                    url = f"http://{SERVER_HOST}:{self.port}/health"
+                    with urllib.request.urlopen(url, timeout=2) as response:
+                        return response.status == 200
+                except:
+                    pass
+            return result == 0
+        except Exception:
+            return False
+
     def infer(self, prompt: str, max_tokens: int = None) -> Optional[str]:
         """Run inference via HTTP API."""
-        if not self._started or not self.process:
+        if not self._started:
             error("llama-server not running")
             return None
 
@@ -189,7 +225,7 @@ class LlamaServer:
                     method='POST'
                 )
 
-                with urllib.request.urlopen(req, timeout=120) as response:
+                with urllib.request.urlopen(req, timeout=300) as response:
                     result = json.loads(response.read().decode('utf-8'))
                     return result.get("content", "").strip()
 
@@ -216,9 +252,12 @@ class LlamaServer:
     
     def is_running(self) -> bool:
         """Check if server process is running."""
-        if self.process is None:
-            return False
-        return self.process.poll() is None
+        if self.process is not None:
+            return self.process.poll() is None
+        # If no process but _started is True, check if port is responding
+        if self._started:
+            return self._check_health()
+        return False
 
 
 class ModelLoader:

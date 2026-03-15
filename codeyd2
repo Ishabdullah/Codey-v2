@@ -112,24 +112,29 @@ stop_daemon() {
     fi
     
     echo "Stopping Codey-v2 daemon (PID: $PID)..."
-    
+
     # Send SIGTERM for graceful shutdown
     kill -TERM "$PID" 2>/dev/null || true
-    
+
     # Wait for process to exit
     for i in {1..10}; do
         if ! kill -0 "$PID" 2>/dev/null; then
             echo "Daemon stopped"
             rm -f "$PID_FILE"
+            # Also kill any orphaned llama-server (SIGKILL so SIGSTOP'd procs die too)
+            pkill -9 -f "llama-server" 2>/dev/null || true
+            echo "Model server stopped"
             return 0
         fi
         sleep 0.5
     done
-    
+
     # Force kill if still running
     echo "Force killing daemon..."
     kill -9 "$PID" 2>/dev/null || true
     rm -f "$PID_FILE"
+    # Kill llama-server too
+    pkill -9 -f "llama-server" 2>/dev/null || true
     echo "Daemon stopped (forced)"
 }
 

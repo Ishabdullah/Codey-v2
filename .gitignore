@@ -1,3 +1,4 @@
+# ── Python ────────────────────────────────────────────────────────────────────
 __pycache__/
 *.pyc
 *.pyo
@@ -6,13 +7,59 @@ __pycache__/
 *.egg-info/
 dist/
 build/
+.eggs/
+
+# ── Virtual environments ───────────────────────────────────────────────────────
 .env
 .venv
 venv/
-# Test files generated during dev
-test_undo.py
-broken.py
-fizzbuzz.py
-greet.py
-# Backup directories
+env/
+
+# ── Codey-v2: user-generated / per-install files ──────────────────────────────
+# Users generate these themselves after install — should NOT be in the repo
+CODEY.md
+CLAUDE.md
+
+# ── Codey-v2: runtime state ───────────────────────────────────────────────────
+# Daemon state, logs, PID, socket, checkpoints, sessions
+~/.codey-v2/
+.codey-v2/
+*.pid
+*.sock
+*.log
+codey_sessions/
+.codey_sessions/
+checkpoints/
+
+# ── Codey-v2: model files ─────────────────────────────────────────────────────
+# Models live in ~/models/, never committed
+*.gguf
+*.bin
+*.safetensors
+model/
+
+# ── Codey-v2: fine-tuning output ──────────────────────────────────────────────
+*.jsonl
+*.ipynb
+codey-finetune*/
+codey-lora*/
+
+# ── Codey-v2: dev artifacts ───────────────────────────────────────────────────
 codey_backup_*/
+.pytest_cache/
+.codeyignore
+audit_report_*.md
+test_checkpoint.json
+test1_output.log
+test_project/
+
+# ── Secrets ───────────────────────────────────────────────────────────────────
+*.key
+*.pem
+*.token
+secrets.py
+config.local.*
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

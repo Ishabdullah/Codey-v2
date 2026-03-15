@@ -10,6 +10,7 @@ from core.loader_v2 import get_loader
 from core.inference_v2 import infer
 from core.agent import run_agent
 from core import context as ctx
+from core.sysmon import get_monitor
 
 BANNER = f"""[bold green]
   ██████╗ ██████╗ ██████╗ ███████╗██╗   ██╗
@@ -76,19 +77,21 @@ def apply_overrides(args):
         config.MODEL_CONFIG["n_ctx"] = args.ctx
 
 def shutdown():
+    # Stop system monitor
+    try:
+        get_monitor().stop()
+    except Exception:
+        pass
     # Unload model and kill llama-server on port 8080
     try:
         from core.loader_v2 import get_loader
         get_loader().unload()
     except Exception:
         pass
-    # Fallback: pkill any orphan llama-server on port 8080
+    # SIGKILL any remaining llama-server (SIGSTOP'd processes ignore SIGTERM)
     try:
         import subprocess
-        subprocess.run(
-            ["pkill", "-f", "llama-server.*8080"],
-            capture_output=True, timeout=5
-        )
+        subprocess.run(["pkill", "-9", "-f", "llama-server"], capture_output=True, timeout=5)
     except Exception:
         pass
 
@@ -522,6 +525,11 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
 def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=False, no_plan=False, session_path=None, no_resume=False):
     console.print(BANNER)
     separator()
+
+    # Start system monitor (background thread — also updates terminal title)
+    monitor = get_monitor()
+    monitor.start()
+
     # v2: Use loader_v2 to ensure model is available
     loader = get_loader()
     loader.load_primary()
@@ -580,6 +588,9 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
             console.print("\n[dim]Interrupted.[/dim]")
 
     while True:
+        # ── Stats bar above each prompt ────────────────────────────────────
+        console.print(monitor.render())
+
         loaded = ctx.list_loaded()
         suffix = f" [bold dim]({len(loaded)} file{'s' if len(loaded)!=1 else ''})[/bold dim]" if loaded else ""
         try:

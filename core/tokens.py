@@ -23,12 +23,17 @@ def estimate_messages_tokens(messages: list[dict]) -> int:
 
 def usage_bar(used: int, total: int, width: int = 20) -> str:
     """Return a simple ASCII usage bar."""
-    import core.inference as _inf
     pct = min(used / total, 1.0)
     filled = int(pct * width)
     bar = "█" * filled + "░" * (width - filled)
     color = "green" if pct < 0.6 else "yellow" if pct < 0.85 else "red"
-    tps = f" [dim]· {_inf.last_tps} t/s[/dim]" if _inf.last_tps > 0 else ""
+    tps = ""
+    try:
+        import core.inference_v2 as _inf
+        if hasattr(_inf, "last_tps") and _inf.last_tps > 0:
+            tps = f" [dim]· {_inf.last_tps:.1f} t/s[/dim]"
+    except Exception:
+        pass
     return f"[{color}]{bar}[/{color}] {used}/{total} tokens ({pct*100:.0f}%){tps}"
 
 def get_context_usage(messages: list[dict]) -> tuple[int, int]:

@@ -191,25 +191,32 @@ class UnixSocketBackend:
     def start_server(self, model_path: Path, n_ctx: int = 4096, n_threads: int = 4) -> bool:
         """
         Start llama-server with Unix socket.
-        
+
         Args:
             model_path: Path to GGUF model
             n_ctx: Context window
             n_threads: CPU threads
-            
+
         Returns:
             True if server started successfully
         """
         import subprocess
-        
+        import socket
+
+        # Check if llama-server is already running on TCP port 8080
+        # (e.g., started by daemon). If so, don't start a new Unix socket server.
+        if self._is_tcp_server_running():
+            info("Unix socket: llama-server already running on TCP 8080 (daemon mode), skipping Unix socket start")
+            return False  # Trigger fallback to TCP HTTP backend
+
         try:
             info(f"Unix socket: Starting llama-server with socket {self._socket_path}")
-            
+
             # Remove old socket if exists
             socket_file = Path(self._socket_path)
             if socket_file.exists():
                 socket_file.unlink()
-            
+
             # Build command with --socket flag
             cmd = [
                 str(LLAMA_SERVER_BIN),
@@ -223,48 +230,63 @@ class UnixSocketBackend:
                 "--repeat-penalty", str(MODEL_CONFIG["repeat_penalty"]),
                 "--n-predict", str(MODEL_CONFIG["max_tokens"]),
             ]
-            
+
             # Add stop tokens
             for stop in MODEL_CONFIG.get("stop", []):
                 cmd.extend(["--reverse-prompt", stop])
-            
+
             # Start process
             log_file = Path.home() / ".codey-v2" / "llama-server-uds.log"
             log_file.parent.mkdir(parents=True, exist_ok=True)
-            
+
             with open(log_file, "w") as f:
                 f.write(f"Starting llama-server (Unix socket): {' '.join(cmd)}\n")
-            
+
             log_fd = open(log_file, "a")
-            
+
             self._process = subprocess.Popen(
                 cmd,
                 stdout=log_fd,
                 stderr=subprocess.STDOUT,
                 preexec_fn=os.setsid if os.name != 'nt' else None,
             )
-            
+
             info(f"Unix socket: llama-server PID {self._process.pid}")
-            
+
             # Wait for socket to be ready
-            for i in range(60):  # 30 second timeout
+            for i in range(120):  # 60 second timeout
                 time.sleep(0.5)
                 if socket_file.exists():
                     time.sleep(0.5)  # Extra moment to initialize
                     success(f"Unix socket: Server ready on {self._socket_path}")
                     return True
-                    
+
                 if self._process.poll() is not None:
                     error(f"Unix socket: Server died with code {self._process.returncode}")
                     return False
-            
+
             error("Unix socket: Timeout waiting for socket")
             return False
-            
+
         except Exception as e:
             error(f"Unix socket: Failed to start server: {e}")
             return False
-    
+
+    def _is_tcp_server_running(self, host: str = "127.0.0.1", port: int = 8080) -> bool:
+        """
+        Check if llama-server is already running on TCP port.
+
+        This prevents starting duplicate servers when daemon is running.
+        """
+        try:
+            sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            sock.settimeout(1.0)
+            result = sock.connect_ex((host, port))
+            sock.close()
+            return result == 0
+        except Exception:
+            return False
+
     def stop_server(self):
         """Stop llama-server process."""
         if hasattr(self, '_process') and self._process:
@@ -326,7 +348,7 @@ class UnixSocketBackend:
                 method='POST'
             )
             
-            with urllib.request.urlopen(req, timeout=120) as response:
+            with urllib.request.urlopen(req, timeout=300) as response:
                 result = json.loads(response.read().decode('utf-8'))
                 
             elapsed = time.time() - start
@@ -465,7 +487,7 @@ class TcpHttpBackend:
                 method='POST'
             )
             
-            with urllib.request.urlopen(req, timeout=120) as response:
+            with urllib.request.urlopen(req, timeout=300) as response:
                 result = json.loads(response.read().decode('utf-8'))
             
             elapsed = time.time() - start
@@ -522,7 +544,7 @@ class HybridInferenceBackend:
     def initialize(self) -> str:
         """
         Initialize available backends.
-        
+
         Returns:
             Name of best available backend
         """
@@ -533,14 +555,30 @@ class HybridInferenceBackend:
             init_success=direct_available,
             init_error=self._direct._init_error
         )
-        
+
         if direct_available:
             info("Hybrid backend: Direct binding available (preferred)")
             self._active_backend = self._direct
             return "direct"
-        
+
         # Try Unix socket
         if self._unix:
+            # Check if llama-server is already running on TCP (e.g., from daemon or loader_v2)
+            # If so, skip Unix socket and use TCP directly to avoid "socket not found" errors
+            if self._unix._is_tcp_server_running():
+                info("Hybrid backend: llama-server already running on TCP 8080, using TCP backend")
+                self._stats["unix_socket"] = BackendStats(
+                    backend_name="unix_socket",
+                    init_success=False,
+                    init_error="TCP server already running"
+                )
+                self._active_backend = self._tcp
+                self._stats["tcp_http"] = BackendStats(
+                    backend_name="tcp_http",
+                    init_success=True
+                )
+                return "tcp_http"
+            
             # Unix socket availability depends on llama-server --socket support
             # We'll try to start it when loading a model
             info("Hybrid backend: Unix socket available (secondary)")
@@ -550,7 +588,7 @@ class HybridInferenceBackend:
             )
             self._active_backend = self._unix
             return "unix_socket"
-        
+
         # Fallback to TCP
         info("Hybrid backend: TCP HTTP available (fallback)")
         self._stats["tcp_http"] = BackendStats(
