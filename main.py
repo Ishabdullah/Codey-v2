@@ -76,9 +76,19 @@ def apply_overrides(args):
         config.MODEL_CONFIG["n_ctx"] = args.ctx
 
 def shutdown():
+    # Unload model and kill llama-server on port 8080
     try:
-        from core.inference_v2 import infer as infer_v2
-        # stop_server is not needed in v2 - models are managed by loader_v2
+        from core.loader_v2 import get_loader
+        get_loader().unload()
+    except Exception:
+        pass
+    # Fallback: pkill any orphan llama-server on port 8080
+    try:
+        import subprocess
+        subprocess.run(
+            ["pkill", "-f", "llama-server.*8080"],
+            capture_output=True, timeout=5
+        )
     except Exception:
         pass
 
@@ -399,6 +409,51 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
         
         return True, history
 
+    if low.startswith("/peer"):
+        from core.peer_cli import get_peer_cli_manager
+        mgr = get_peer_cli_manager()
+        parts = cmd.split(maxsplit=2)
+        available = mgr.available()
+        if not available:
+            warning("No peer CLIs found (claude / gemini / copilot / qwen).")
+            return True, history
+
+        # /peer → list available CLIs
+        if len(parts) == 1:
+            console.print("[bold]Available peer CLIs:[/bold]")
+            for c in available:
+                console.print(f"  [cyan]{c.name}[/cyan]  —  {c.description}")
+            console.print("\nUsage: /peer <name> <task>")
+            console.print("       /peer copilot write a hello world in Python")
+            return True, history
+
+        # /peer <name> <task>  OR  /peer <task>  (auto-pick)
+        by_name = {c.name: c for c in available}
+        if len(parts) >= 3 and parts[1].lower() in by_name:
+            cli = by_name[parts[1].lower()]
+            task = parts[2]
+        elif len(parts) >= 2 and parts[1].lower() in by_name:
+            cli = by_name[parts[1].lower()]
+            task = ""
+        else:
+            # No CLI name given — auto-pick based on task
+            task = " ".join(parts[1:])
+            task_type = mgr.detect_task_type(task, [])
+            cli = mgr.select_cli(task_type)
+            if not cli:
+                error("No peer CLIs available.")
+                return True, history
+            info(f"Auto-selected: {cli.description}")
+
+        # Pass the raw task — no wrapping needed for direct /peer calls
+        output = mgr.call(cli, task)
+        if output and len(output.strip()) > 10:
+            summary = mgr.summarize_result(cli.name, output, task)
+            history.append({"role": "user", "content": f"/peer {cli.name}: {task}"})
+            history.append({"role": "assistant", "content": summary})
+            success(f"Result from {cli.name} added to conversation context.")
+        return True, history
+
     if low == "/help":
         console.print("""
 [bold]File commands:[/bold]
@@ -434,6 +489,11 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
 [bold]Learning:[/bold]
   /learning              Show learning system status (v2.2.0)
 
+[bold]Peer CLIs:[/bold]
+  /peer                  List available peer CLIs
+  /peer <name> <task>    Call a specific CLI (claude/gemini/copilot/qwen)
+  /peer <task>           Auto-pick best CLI for the task
+
 [bold]CLI flags:[/bold]
   codey-v2 "task"              One-shot
   codey-v2 --chat "task"       Chat with prefilled prompt
@@ -443,6 +503,7 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
   codey-v2 --init              Generate CODEY.md and exit
   codey-v2 --no-resume         Start fresh (ignore saved session)
   codey-v2 --allow-self-mod    Enable self-modification (with checkpoints)
+  codey-v2 --no-peer          Disable peer CLI escalation
 
 [bold]Fine-tuning (v2.3.0):[/bold]
   codey-v2 --finetune          Export fine-tuning dataset + Colab notebook

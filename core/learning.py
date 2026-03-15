@@ -90,6 +90,18 @@ class LearningManager:
         """
         return self.error_db.record_error(error_type, error_message, context)
 
+    def learn_from_message(self, message: str) -> dict:
+        """
+        Learn preferences from natural language in a user message.
+
+        Args:
+            message: User's message text
+
+        Returns:
+            Dict of category -> value for preferences detected
+        """
+        return self.preferences.learn_from_message(message)
+
     def record_fix(self, error_key: str, fix: str, success: bool = True):
         """
         Record a fix for an error.

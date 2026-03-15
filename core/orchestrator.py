@@ -47,6 +47,8 @@ def is_complex(message):
         "create", "write", "make", "build", "edit", "fix", "run", "execute",
         "install", "add", "delete", "remove", "update", "patch", "refactor",
         "implement", "generate", "rewrite",
+        "review", "analyze", "analyse", "audit", "examine", "inspect", "assess",
+        "read", "look at", "show me", "check",
     ]
     _has_action = any(k in msg for k in _action_kws)
     

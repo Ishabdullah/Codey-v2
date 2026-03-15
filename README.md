@@ -13,12 +13,32 @@ Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-ba
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v2.4.0 · Learning AI Agent · Termux
+  v2.5.0 · Learning AI Agent · Termux
 ```
 
 ---
 
 ## Key Features
+
+### 🤝 Peer CLI Escalation (v2.5.0)
+- **Auto-escalation**: When Codey hits max retries, it can call Claude Code, Gemini CLI, or Qwen CLI for help
+- **Manual escalation**: `/peer` command to directly invoke a peer CLI at any time
+- **Smart routing**: Task type detection picks the best CLI (debugging → Claude, analysis → Gemini, generation → Qwen)
+- **Non-interactive mode**: All peers run via `-p` flag — clean streaming output, no TUI overhead
+- **Crash detection**: At startup, Codey tests each CLI binary and auto-excludes any that crash (e.g. missing native modules on Android ARM64)
+- **Result injection**: Peer output is summarized and injected into Codey's conversation context to continue the task
+- **User control**: Confirm/deny/redirect/switch-CLI prompt before any escalation runs
+
+### 🧠 Enhanced Learning (v2.5.0)
+- **Natural language detection**: Learns preferences from plain statements ("I prefer type hints", "use httpx not requests")
+- **Expanded categories**: Tracks `type_hints`, `async_style`, `http_library`, `cli_library`, `log_style` in addition to existing preferences
+- **CODEY.md sync**: High-confidence preferences are automatically written to the project's Conventions section
+- **File-based learning**: Detects coding style from files Codey reads or writes during a session
+
+### 🔍 Self-Review Fix (v2.5.0)
+- **Reads before reviewing**: Codey now auto-loads its own source files when asked to review or analyze itself
+- **No more hallucination**: Self-review requests trigger pre-loading of `agent.py`, `main.py`, `inference_hybrid.py`, etc.
+- **REVIEW/AUDIT rule**: System prompt enforces `read_file` before commenting on any code
 
 ### 🔧 Fine-tuning Support (v2.3.0)
 - **Export Interaction Data**: Curate high-quality examples from your history
@@ -162,6 +182,58 @@ Codey-v2 is a **persistent, autonomous coding agent** that runs as a background 
 
 ---
 
+## Peer CLI Escalation
+
+Codey can call external AI coding CLIs when it gets stuck or when you invoke them directly.
+
+### Supported Peers
+
+| CLI | Best For | Flag |
+|-----|----------|------|
+| `claude` (Claude Code) | Debugging, refactor, architecture, complex tasks | `-p` |
+| `gemini` (Gemini CLI) | Explain, analysis, large context, review | `-p` |
+| `qwen` (Qwen Code) | Generate, code completion, quick fixes | `-p` |
+
+All peers run in non-interactive mode — output streams live to your terminal and is captured for Codey.
+
+### Manual Escalation
+
+```bash
+# List available peer CLIs
+/peer
+
+# Call a specific peer
+/peer claude debug this authentication bug
+/peer gemini explain what this module does
+/peer qwen write a hello world script
+
+# Auto-pick best CLI for the task
+/peer fix the broken import in utils.py
+```
+
+### Auto-Escalation
+
+When Codey exhausts its retry budget on a task, it presents a confirmation prompt:
+
+```
+⚠  Codey hit max retries and needs help.
+  Task:       fix the broken import in utils.py
+  Suggest:    Claude Code (Anthropic)  (debugging task)
+  Fallbacks:  gemini, qwen
+
+  Your options:
+    y / enter          Call Claude Code
+    n                  Skip — return control to you
+    gemini | qwen      Use that CLI instead
+    <any text>         Tell Codey to try differently
+```
+
+### Crash Detection
+
+On Android ARM64, some CLIs crash at startup due to missing native modules (e.g. `node-pty` prebuilds). Codey detects this automatically by running `check_cmd` at startup and inspecting stderr for crash signatures. Broken CLIs are excluded from the available list — no manual configuration needed.
+
+---
+
 ## Quick Start
 
 ### One-Line Installation
@@ -299,6 +371,23 @@ codeyd2 status
 | `--no-resume` | Start fresh (ignore saved session) |
 | `--plan` | Enable plan mode for complex tasks |
 | `--no-plan` | Disable orchestration/planning |
+
+### In-Session Commands
+
+| Command | Description |
+|---------|-------------|
+| `/peer` | List available peer CLIs |
+| `/peer <name> <task>` | Call a specific peer CLI directly |
+| `/peer <task>` | Auto-pick best peer CLI for the task |
+| `/learning` | Show learning system status |
+| `/read <file>` | Load file into context |
+| `/diff [file]` | Show what Codey changed |
+| `/undo [file]` | Restore file to previous version |
+| `/git [msg]` | Git status / commit / push |
+| `/search <pattern>` | Grep across project files |
+| `/context` | Show loaded files |
+| `/clear` | Clear history and session |
+| `/exit` | Save session and quit |
 
 ### Environment Variables
 
@@ -754,10 +843,15 @@ rollback(cp_id)
 │   ├── router.py           # Model routing heuristic
 │   ├── loader_v2.py        # Model loading/hot-swap
 │   ├── inference_v2.py     # Dual-model inference
+│   ├── inference_hybrid.py # Hybrid backend (direct/unix/tcp)
 │   ├── checkpoint.py       # Self-modification safety
 │   ├── observability.py    # Self-state queries
 │   ├── recovery.py         # Error recovery strategies
-│   └── thermal.py          # Thermal management
+│   ├── thermal.py          # Thermal management
+│   ├── peer_cli.py         # Peer CLI escalation manager (v2.5.0)
+│   ├── peer_shell.py       # PTY/subprocess runners for peer CLIs (v2.5.0)
+│   ├── learning.py         # Learning system coordinator (v2.2.0+)
+│   └── preferences.py      # User preference learning & NL detection (v2.5.0)
 ├── tools/
 │   └── file_tools.py       # Refactored file operations
 ├── utils/
@@ -940,6 +1034,7 @@ ls -la ~/models/qwen2.5-1.5b/
 | **File watches require `watchdog`** | Background file monitoring disabled if not installed | Install with `pip install watchdog` (optional) |
 | **No NPU acceleration** | CPU-only inference (~3-5 t/s at 4 threads) | Thermal management prevents throttling |
 | **Single-device only** | State not synced across devices | Intentional design for local-only privacy |
+| **Peer CLIs with node-pty** | CLIs that bundle native node-pty module (e.g. GitHub Copilot standalone) crash on Android ARM64 — no prebuilt `pty.node` for this platform | Auto-detected and excluded at startup; Claude Code, Gemini CLI, and Qwen Code all work via `-p` non-interactive mode |
 
 ### Technical Notes (v2.4.0)
 
@@ -978,6 +1073,7 @@ ls -la ~/models/qwen2.5-1.5b/
 
 | Version | Highlights |
 |---------|------------|
+| **v2.5.0** | **Peer CLI Escalation** - Auto-escalate to Claude Code, Gemini CLI, Qwen CLI on retry exhaustion; `/peer` command for manual escalation; crash detection for Android ARM64 native module issues; enhanced learning with NL preference extraction, expanded categories, CODEY.md sync; self-review fix auto-loads own source files |
 | **v2.4.0** | **Hybrid Inference Backend** - Direct llama-cpp-python + Unix socket HTTP + TCP HTTP fallback; accurate architecture diagram; documented Termux constraints |
 | **v2.3.0** | **Fine-tuning Support** - Export interaction data, Unsloth Colab notebooks, LoRA adapter import, off-device training workflow |
 | **v2.2.0** | **Machine Learning** - User preference learning, error pattern database, strategy effectiveness tracking, adaptive behavior |

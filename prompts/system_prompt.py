@@ -39,4 +39,5 @@ RULES:
 - ONE tool call per response. Output ONLY the <tool> block, nothing else if calling a tool.
 - Use patch_file for small edits to existing files (faster, safer than rewriting).
 - Final answer (if no tool used): professional, concise, 1-3 sentences.
+- REVIEW/AUDIT RULE: If asked to review, analyze, audit, or assess code or your own files, you MUST use read_file to read each relevant file BEFORE commenting on it. Never describe file contents from memory — always read first, then report what you actually found.
 """

@@ -151,8 +151,31 @@ def detect_filenames(text):
                 existing.append(str(p2))
     return existing
 
+_SELF_REVIEW_KEYWORDS = [
+    "review yourself", "review codey", "audit yourself", "audit codey",
+    "analyze yourself", "analyse yourself", "analyze codey", "analyse codey",
+    "review your own", "examine yourself", "assess yourself",
+    "review your code", "your codebase", "your source",
+]
+
+_SELF_REVIEW_FILES = [
+    "core/agent.py",
+    "utils/config.py",
+    "core/memory.py",
+    "tools/file_tools.py",
+    "prompts/system_prompt.py",
+]
+
 def auto_load_from_prompt(prompt):
     found = detect_filenames(prompt)
+
+    # Detect self-review requests and pre-load core files
+    prompt_lower = prompt.lower()
+    if any(kw in prompt_lower for kw in _SELF_REVIEW_KEYWORDS):
+        for f in _SELF_REVIEW_FILES:
+            if f not in found:
+                found.append(f)
+
     loaded = []
     for f in found:
         from pathlib import Path as _P

@@ -329,6 +329,31 @@ def is_hallucination(response, user_message, tools_used):
 
 def build_system_prompt(message=""):
     parts = [SYSTEM_PROMPT]
+    # Inject learned user preferences so they influence code generation
+    try:
+        prefs = _get_learning().get_all_preferences()
+        if prefs:
+            pref_lines = []
+            labels = {
+                "test_framework":    "Test framework",
+                "code_style":        "Code style",
+                "naming_convention": "Naming convention",
+                "import_style":      "Import style",
+                "docstring_style":   "Docstring style",
+                "error_handling":    "Error handling",
+                "type_hints":        "Type hints",
+                "async_style":       "Async style",
+                "http_library":      "HTTP library",
+                "cli_library":       "CLI library",
+                "log_style":         "Logging style",
+            }
+            for k, v in prefs.items():
+                if v:
+                    pref_lines.append(f"- {labels.get(k, k)}: {v}")
+            if pref_lines:
+                parts.append("\n## User Preferences\nAlways match these preferences when generating code:\n" + "\n".join(pref_lines))
+    except Exception:
+        pass
     codeymd = read_codeymd()
     if codeymd:
         parts.append("\n## Project Memory\n" + codeymd)
@@ -391,6 +416,8 @@ def check_git_and_offer_commit(user_message, tools_used):
             success(f"Committed: {msg}")
 
 def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, _in_subtask=False):
+    # Learn preferences from natural language in the user's message
+    _get_learning().learn_from_message(user_message)
     used, total = get_context_usage([{"role": "system", "content": build_system_prompt()}])
     if used < total * 0.5:
         auto_load_from_prompt(user_message)
@@ -443,6 +470,8 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
         "create", "write", "make", "build", "edit", "fix", "run", "execute",
         "install", "add", "delete", "remove", "update", "patch", "refactor",
         "implement", "generate", "rewrite", "deploy", "setup", "configure",
+        "review", "analyze", "analyse", "audit", "examine", "inspect", "assess",
+        "read", "look at", "show me", "check",
     ]
     _has_action = any(k in msg_low for k in _action_kws)
     _question_starters = (
@@ -473,6 +502,8 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
     hallucination_count = 0
     auto_retries = 0
     max_retries = 2
+    error_log = []        # accumulates error text for peer CLI context
+    files_touched = []    # accumulates file paths for peer CLI context
     while step < max_steps:
         step += 1
         used, total = get_context_usage(messages)
@@ -528,12 +559,49 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                 fpath = args.get("path", "")
                 load_file(fpath)
                 _mem.touch_file(fpath)
+                if fpath.endswith(".py"):
+                    try:
+                        from pathlib import Path as _P
+                        _content = _P(fpath).read_text(encoding="utf-8", errors="replace")
+                        _get_learning().learn_from_file(fpath, _content)
+                    except Exception:
+                        pass
+            elif name == "read_file":
+                fpath = args.get("path", "")
+                if fpath.endswith(".py") and not last_tool_result.startswith("[ERROR]"):
+                    try:
+                        _get_learning().learn_from_file(fpath, last_tool_result)
+                    except Exception:
+                        pass
+            if is_error(last_tool_result, name):
+                error_log.append(last_tool_result[:300])
+            fpath_touched = args.get("path", "")
+            if fpath_touched and fpath_touched not in files_touched:
+                files_touched.append(fpath_touched)
+
             if is_error(last_tool_result, name) and auto_retries < max_retries:
                 auto_retries += 1
                 warning("Error detected — auto-retry " + str(auto_retries) + "/" + str(max_retries))
                 messages.append({"role": "assistant", "content": "<tool>\n" + json.dumps(tool_dict) + "\n</tool>"})
                 messages.append({"role": "user", "content": "Error:\n" + last_tool_result + "\n\nFix the implementation file only. Never modify test files. After fixing, run the tests again to verify."})
                 continue
+            elif is_error(last_tool_result, name) and auto_retries >= max_retries and not _in_subtask:
+                # Exhausted retries — offer to escalate to a peer CLI
+                from core.peer_cli import escalate
+                peer_result = escalate(user_message, error_log, files_touched)
+                if peer_result and peer_result.startswith("[redirect]:"):
+                    # User told Codey to try a different approach
+                    new_instruction = peer_result[len("[redirect]: "):]
+                    messages.append({"role": "user", "content": new_instruction})
+                    auto_retries = 0
+                    continue
+                elif peer_result:
+                    # Peer CLI ran — inject its output and let Codey act on it
+                    messages.append({"role": "assistant", "content": "<tool>\n" + json.dumps(tool_dict) + "\n</tool>"})
+                    messages.append({"role": "user", "content": peer_result + "\n\nBased on the above, complete the task or summarize what was accomplished."})
+                    auto_retries = 0
+                    continue
+                # else: user skipped escalation, fall through to normal handling
             messages.append({"role": "assistant", "content": "<tool>\n" + json.dumps(tool_dict) + "\n</tool>"})
             messages.append({"role": "user", "content": "Tool result: " + last_tool_result[:500] + "\nNext action or final answer:"})
             continue
