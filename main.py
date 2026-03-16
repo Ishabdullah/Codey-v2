@@ -412,6 +412,70 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
         
         return True, history
 
+    # ── /voice ───────────────────────────────────────────────────────────────
+    if low.startswith("/voice"):
+        from core.voice import get_voice
+        v = get_voice()
+        parts = cmd.split()
+        sub = parts[1].lower() if len(parts) > 1 else ""
+
+        if sub == "on":
+            v.turn_on()
+        elif sub == "off":
+            v.turn_off()
+        elif sub == "listen":
+            text = v.listen()
+            if text:
+                info(f"Voice input: {text}")
+                # Run as agent task immediately
+                try:
+                    response, history = run_agent(text, history, yolo=yolo)
+                    if response and not response.startswith("["):
+                        separator()
+                        console.print(f"\n[bold green]Codey-v2:[/bold green] {response}")
+                        separator()
+                        if v.enabled and v.tts_available():
+                            try:
+                                v.speak(response)
+                            except KeyboardInterrupt:
+                                pass
+                    from core.sessions import save_session
+                    save_session(history)
+                except KeyboardInterrupt:
+                    console.print("\n[dim]Interrupted.[/dim]")
+        elif sub == "rate":
+            if len(parts) > 2:
+                try:
+                    v.set_rate(float(parts[2]))
+                except ValueError:
+                    error("Usage: /voice rate <number>  (e.g. /voice rate 1.5)")
+            else:
+                error("Usage: /voice rate <number>  (e.g. /voice rate 1.5)")
+        elif sub == "pitch":
+            if len(parts) > 2:
+                try:
+                    v.set_pitch(float(parts[2]))
+                except ValueError:
+                    error("Usage: /voice pitch <number>  (e.g. /voice pitch 0.9)")
+            else:
+                error("Usage: /voice pitch <number>")
+        elif sub == "speak" and len(parts) > 2:
+            # /voice speak <text> — one-shot TTS test
+            text_to_speak = " ".join(parts[2:])
+            if not v.speak(text_to_speak):
+                warning("TTS unavailable. Install Termux:API.")
+        else:
+            # /voice with no sub-command → show status + help
+            console.print(f"\n  {v.status()}\n")
+            console.print("  [bold]Voice commands:[/bold]")
+            console.print("    /voice on              Enable voice mode (TTS + STT)")
+            console.print("    /voice off             Disable voice mode")
+            console.print("    /voice listen          One-shot voice input → agent")
+            console.print("    /voice rate <n>        Set TTS speed  (default 1.0)")
+            console.print("    /voice pitch <n>       Set TTS pitch  (default 1.0)")
+            console.print("    /voice speak <text>    Test TTS with given text\n")
+        return True, history
+
     if low.startswith("/peer"):
         from core.peer_cli import get_peer_cli_manager
         mgr = get_peer_cli_manager()
@@ -491,6 +555,16 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
 
 [bold]Learning:[/bold]
   /learning              Show learning system status (v2.2.0)
+
+[bold]Voice (v2.5.1 — requires Termux:API):[/bold]
+  /voice                 Show voice status and commands
+  /voice on              Enable voice mode (TTS + STT)
+  /voice off             Disable voice mode
+  /voice listen          One-shot voice input → send to agent
+  /voice rate <n>        Set TTS speed (default 1.0, range 0.1–4.0)
+  /voice pitch <n>       Set TTS pitch (default 1.0)
+  /voice speak <text>    Test TTS with given text
+  (In voice mode, press Enter on a blank line to speak your task)
 
 [bold]Peer CLIs:[/bold]
   /peer                  List available peer CLIs
@@ -609,7 +683,20 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
             break
 
         if not user_input:
-            continue
+            # In voice mode: blank input → trigger STT
+            try:
+                from core.voice import get_voice as _get_voice
+                _v = _get_voice()
+                if _v.enabled and _v.stt_available():
+                    spoken = _v.listen()
+                    if spoken:
+                        user_input = spoken
+                    else:
+                        continue
+                else:
+                    continue
+            except Exception:
+                continue
 
         was_cmd, history = handle_command(user_input, history, yolo=yolo)
         if was_cmd:
@@ -622,6 +709,18 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
                 separator()
                 console.print(f"\n[bold green]Codey-v2:[/bold green] {response}")
                 separator()
+                # Speak the response if voice mode is on (Ctrl+C to interrupt)
+                try:
+                    from core.voice import get_voice as _get_voice
+                    _v = _get_voice()
+                    if _v.enabled and _v.tts_available():
+                        try:
+                            _v.speak(response)
+                        except KeyboardInterrupt:
+                            _v.stop_speaking()
+                            console.print("[dim]Speech interrupted.[/dim]")
+                except Exception:
+                    pass
             save_session(history)
         except KeyboardInterrupt:
             console.print("\n[dim]Interrupted.[/dim]")
