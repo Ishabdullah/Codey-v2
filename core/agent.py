@@ -130,8 +130,33 @@ def extract_json(raw):
     # Clean candidate for common LLM artifacts: trailing commas
     cleaned = re.sub(r',\s*([}\]])', r'\1', candidate)
 
-    # Try raw candidate first, then cleaned version
-    for s in [candidate, cleaned]:
+    # Fix literal newlines inside JSON strings (common 7B model error)
+    # Replace actual newlines inside string values with \n
+    def _fix_literal_newlines(s):
+        result = []
+        in_str = False
+        esc = False
+        for ch in s:
+            if esc:
+                result.append(ch)
+                esc = False
+                continue
+            if ch == '\\':
+                result.append(ch)
+                esc = True
+                continue
+            if ch == '"':
+                in_str = not in_str
+                result.append(ch)
+                continue
+            if in_str and ch == '\n':
+                result.append('\\n')
+                continue
+            result.append(ch)
+        return ''.join(result)
+
+    # Try raw candidate first, then cleaned, then newline-fixed
+    for s in [candidate, cleaned, _fix_literal_newlines(cleaned)]:
         try:
             return json.loads(s)
         except (json.JSONDecodeError, ValueError):
@@ -167,11 +192,13 @@ def extract_json(raw):
     return None
 
 def parse_tool_call(text):
+    # ── Primary: JSON format in <tool> tags ──────────────────────────
     match = re.search(r"<tool>\s*(\{.*)", text, re.DOTALL)
     if match:
         result = extract_json(match.group(1))
         if result and "name" in result:
             return result
+    # Rogue tags: <write_file>{json}</write_file> etc.
     for tag, canonical in ROGUE_TAG_MAP.items():
         match = re.search(r"<" + tag + r">\s*(\{.*)", text, re.DOTALL)
         if match:
@@ -180,7 +207,19 @@ def parse_tool_call(text):
                 if "name" in inner:
                     return inner
                 return {"name": canonical, "args": inner}
+
+    # ── Fallback: block-style tags (no JSON escaping) ────────────────
+    # <write_file path="...">...code...</write_file>
+    m = re.search(r'<write_file\s+path="([^"]+)">\s*\n?(.*?)(?:</write_file>|\Z)', text, re.DOTALL)
+    if m and m.group(2).strip():
+        return {"name": "write_file", "args": {"path": m.group(1), "content": m.group(2).strip()}}
+
     return None
+
+def _format_tool_for_history(tool_dict):
+    """Format a tool call for conversation history."""
+    return "<tool>\n" + json.dumps(tool_dict) + "\n</tool>"
+
 
 def execute_tool(tool_dict):
     """
@@ -210,8 +249,11 @@ def execute_tool(tool_dict):
                 try: old_content = p.read_text()
                 except: pass
         
-        # ── Pre-write syntax gate (Phase 2) ──────────────────────────────────
-        # Block Python writes that have broken syntax before touching disk.
+        # ── Pre-write syntax check (Phase 2) ────────────────────────────────
+        # Check syntax but STILL WRITE the file. Blocking writes entirely
+        # creates a death spiral where the 7B model retries with less context
+        # and produces even worse code. Better to write it and report the error.
+        _syntax_warning = ""
         if name == "write_file":
             _wpath = args.get("path", "")
             _wcontent = args.get("content", "")
@@ -220,14 +262,13 @@ def execute_tool(tool_dict):
                     from core.linter import check_syntax
                     _syn_err = check_syntax(_wcontent, _wpath)
                     if _syn_err:
-                        return (
-                            f"[ERROR] Pre-write syntax check failed: {_syn_err}\n"
-                            "Fix the syntax error and try writing the file again."
-                        )
+                        _syntax_warning = f"\n[WARNING] Syntax issue: {_syn_err}"
                 except Exception:
-                    pass  # linter unavailable — allow write
+                    pass
 
         result = TOOLS[name](args)
+        if _syntax_warning and not result.startswith("[ERROR]"):
+            result += _syntax_warning
         duration = time.time() - start_time
 
         # ── Auto-lint after successful Python file write (Phase 2) ───────────
@@ -790,7 +831,7 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                     history.append({"role": "user",     "content": user_message})
                     history.append({"role": "assistant", "content": summary})
                     return summary, history
-                messages.append({"role": "assistant", "content": "<tool>\n" + json.dumps(tool_dict) + "\n</tool>"})
+                messages.append({"role": "assistant", "content": _format_tool_for_history(tool_dict)})
                 messages.append({"role": "user", "content": "Already ran that. Result: " + last_tool_result[:200] + "\nTask complete. Reply with 1 sentence only."})
                 continue
             tools_used.append(sig)
@@ -824,9 +865,16 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             if is_error(last_tool_result, name) and auto_retries < max_retries:
                 auto_retries += 1
                 warning("Error detected — auto-retry " + str(auto_retries) + "/" + str(max_retries))
-                messages.append({"role": "assistant", "content": "<tool>\n" + json.dumps(tool_dict) + "\n</tool>"})
+                messages.append({"role": "assistant", "content": _format_tool_for_history(tool_dict)})
                 _retry_path = args.get("path", "the file")
-                messages.append({"role": "user", "content": "Error:\n" + last_tool_result + f"\n\nFix the error in {_retry_path}. Use write_file to replace it with the corrected version. Do not modify any other files."})
+                # Tailor retry message based on error type
+                if "not found" in last_tool_result.lower() or "no such file" in last_tool_result.lower():
+                    # File doesn't exist — tell model to CREATE it, not fix it
+                    messages.append({"role": "user", "content": f"{_retry_path} does not exist yet. Create it now with write_file. Write the COMPLETE file content."})
+                elif "syntax" in last_tool_result.lower():
+                    messages.append({"role": "user", "content": "Error:\n" + last_tool_result + f"\n\nRewrite {_retry_path} with corrected syntax. Write the COMPLETE file."})
+                else:
+                    messages.append({"role": "user", "content": "Error:\n" + last_tool_result + f"\n\nFix the error in {_retry_path}. Use write_file with the corrected version."})
                 continue
             elif is_error(last_tool_result, name) and auto_retries >= max_retries and not _in_subtask:
                 # Exhausted retries — offer to escalate to a peer CLI
@@ -840,14 +888,43 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                     continue
                 elif peer_result:
                     # Peer CLI ran — inject its output and let Codey act on it
-                    messages.append({"role": "assistant", "content": "<tool>\n" + json.dumps(tool_dict) + "\n</tool>"})
+                    messages.append({"role": "assistant", "content": _format_tool_for_history(tool_dict)})
                     messages.append({"role": "user", "content": peer_result + "\n\nBased on the above, complete the task or summarize what was accomplished."})
                     auto_retries = 0
                     continue
                 # else: user skipped escalation, fall through to normal handling
-            messages.append({"role": "assistant", "content": "<tool>\n" + json.dumps(tool_dict) + "\n</tool>"})
+            messages.append({"role": "assistant", "content": _format_tool_for_history(tool_dict)})
             messages.append({"role": "user", "content": "Tool result: " + last_tool_result[:500] + "\nNext action or final answer:"})
             continue
+        # ── Raw code recovery ─────────────────────────────────────────────
+        # If model dumped raw code instead of using tags, detect and auto-wrap.
+        # Common with 7B models that ignore tool format instructions.
+        if _in_subtask and not tools_used:
+            _code_starts = ("#!/", "import ", "from ", "def ", "class ", "\"\"\"", "'''", "const ", "function ", "var ", "let ")
+            _stripped = response.strip()
+            # Also detect markdown code blocks: ```python\ncode\n```
+            _code_block_match = re.search(r'```(?:python|javascript|typescript)?\s*\n(.*?)(?:```|\Z)', _stripped, re.DOTALL)
+            _raw_code = None
+            if _code_block_match:
+                _raw_code = _code_block_match.group(1).strip()
+            elif _stripped and any(_stripped.startswith(s) for s in _code_starts):
+                _raw_code = _stripped
+
+            if _raw_code and len(_raw_code) > 50:
+                # Extract target filename from the prompt
+                _fname_match = re.search(r'(\w+\.(?:py|js|ts|html|css|json))', user_message)
+                _fname = _fname_match.group(1) if _fname_match else None
+                if _fname:
+                    info(f"Auto-wrapping raw code output as write_file({_fname})")
+                    _auto_tool = {"name": "write_file", "args": {"path": _fname, "content": _raw_code}}
+                    last_tool_result = execute_tool(_auto_tool)
+                    tools_used.append("write_file:" + json.dumps({"path": _fname}, sort_keys=True))
+                    if is_error(last_tool_result, "write_file"):
+                        error_log.append(last_tool_result[:300])
+                    messages.append({"role": "assistant", "content": response})
+                    messages.append({"role": "user", "content": "Tool result: " + last_tool_result[:500] + "\nNext action or final answer:"})
+                    continue
+
         false_file, false_run = is_hallucination(response, user_message, tools_used)
         if false_file or false_run:
             hallucination_count += 1

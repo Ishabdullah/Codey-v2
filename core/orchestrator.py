@@ -8,27 +8,12 @@ from utils.logger import info, warning
 
 from prompts.system_prompt import GUIDANCE_HTTP_SERVER, GUIDANCE_HTTP_TESTING, GUIDANCE_SQLITE
 
-PLAN_PROMPT = """Break the task into 2-3 numbered steps. Max 3 steps.
-Each step WRITES ONE FILE with its COMPLETE content. No verification or setup steps.
-
-EXAMPLE — "Create REST API with tests":
-1. Write app.py: Complete HTTP REST API using http.server.BaseHTTPRequestHandler with all endpoints (/account POST, /deposit POST, /withdraw POST, /balance GET), sqlite3 storage with sqlite3.connect(), atomic transactions, serve on port 8765
-2. Write test_api.py: Start server in a thread, test all endpoints using urllib.request HTTP calls (NOT function imports), assert correct responses and balances, shut down server
-3. Run tests: python -m unittest test_api
-
-BAD plans (DO NOT generate these):
-- "Create app.py" then "Add endpoints to app.py" — NEVER split one file across steps
-- "Implement sqlite3 storage" as a separate step — put it IN the app.py step
-- "Verify the server works" / "Check output" — NEVER include verification steps
-- "Create accounts.db" — NEVER create .db files manually (sqlite3.connect() does it)
-
-RULES:
-- ONE step per file. All file content described in that step.
-- Test files MUST use HTTP requests (urllib.request), NOT import app functions directly.
-- NEVER use port 8080 — reserved for llama-server. Use 8765 or 9000.
-- NEVER include git init, .gitignore, or project-setup steps.
-- NEVER overwrite .gitignore, README.md, requirements.txt unless explicitly asked.
-- Last step can be a shell command to run tests.
+PLAN_PROMPT = """Break the task into 2-5 numbered steps. Max 5 steps.
+Each step must be a single concrete action: create a file, edit a file, or run a command.
+Each step is ONE short sentence describing WHAT to do. Do NOT write any code in the plan.
+NEVER include "verify", "check", "review", "open", "save", or "navigate" steps.
+NEVER create .db files (sqlite3.connect() creates them automatically).
+NEVER use port 8080 (reserved). Use 8765 or 9000.
 Output ONLY the numbered list."""
 
 COMPLEX_SIGNALS = [
@@ -160,7 +145,7 @@ def _postprocess_plan(tasks):
     if not filtered:
         return tasks[:1]  # Don't return empty — keep at least one
 
-    # Merge steps targeting the same file
+    # Merge steps targeting the same file — keep the longer description
     merged = []
     seen_files = {}  # filename -> index in merged list
     for t in filtered:
@@ -171,15 +156,16 @@ def _postprocess_plan(tasks):
                 merged_into = seen_files[f]
                 break
         if merged_into is not None:
-            # Append this step's description to the existing step
-            merged[merged_into] = merged[merged_into] + "; also: " + t
+            # Keep the longer/more detailed description
+            if len(t) > len(merged[merged_into]):
+                merged[merged_into] = t
         else:
             idx = len(merged)
             merged.append(t)
             for f in files_in_step:
                 seen_files[f] = idx
 
-    return merged[:3]
+    return merged[:5]
 
 def plan_tasks(user_message, project_context=''):
     """Ask model to plan the task. Returns TaskQueue."""
@@ -318,6 +304,21 @@ def run_queue(queue, yolo=False):
             else:
                 prompt = context_prefix + file_context + guidance + task.description
 
+            # Remind model to use tools (7B models often forget)
+            _target_files = _FILE_RE.findall(task.description)
+            if _target_files:
+                _fname = _target_files[0]
+                prompt += (
+                    f'\n\nUse write_file to create {_fname} with the COMPLETE code. '
+                    f'Output ONLY: <tool>\n{{"name": "write_file", "args": {{"path": "{_fname}", "content": "...ALL CODE HERE..."}}}}\n</tool>'
+                )
+            elif any(k in task.description.lower() for k in ['run', 'execute', 'test', 'python']):
+                _cmd_match = re.search(r'(?:run|execute|python)\s+(.+)', task.description, re.IGNORECASE)
+                _cmd_hint = _cmd_match.group(1).strip() if _cmd_match else "python -m unittest"
+                prompt += (
+                    f'\n\nUse shell tool. Output ONLY: <tool>\n{{"name": "shell", "args": {{"command": "{_cmd_hint}"}}}}\n</tool>'
+                )
+
             history = []  # isolated message history per subtask
 
             try:
@@ -332,6 +333,12 @@ def run_queue(queue, yolo=False):
                         break
 
                 # Validate result — catch false success claims
+                _expected_files = _FILE_RE.findall(task.description)
+                _missing_files = [
+                    f for f in _expected_files
+                    if not (Path.cwd() / f).exists()
+                ]
+
                 if summary.startswith("[INCOMPLETE]"):
                     queue.mark_failed(task.id, summary)
                     prior_results.append(
@@ -341,6 +348,13 @@ def run_queue(queue, yolo=False):
                     queue.mark_failed(task.id, summary)
                     prior_results.append(
                         f'Task {task.id}: {task.description[:60]} -> FAILED: {summary[:80]}'
+                    )
+                elif _missing_files:
+                    _fail_msg = f"Expected file(s) not created: {', '.join(_missing_files)}"
+                    warning(_fail_msg)
+                    queue.mark_failed(task.id, _fail_msg)
+                    prior_results.append(
+                        f'Task {task.id}: {task.description[:60]} -> FAILED: {_fail_msg}'
                     )
                 else:
                     queue.mark_done(task.id, summary)
