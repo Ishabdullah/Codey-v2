@@ -213,8 +213,14 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
         return True, history
 
     if low.startswith("/git"):
-        from core.githelper import git_commit, git_push, git_status, git_log, is_git_repo
-        parts = cmd.split(maxsplit=1)
+        from core.githelper import (
+            git_commit, git_push, git_status, git_log, is_git_repo,
+            git_branches, git_branch_create, git_checkout, git_merge,
+            detect_conflicts, get_conflict_sections,
+            git_diff_for_commit, git_commit_log_messages, generate_commit_message,
+            git_current_branch,
+        )
+        parts = cmd.split(maxsplit=2)
 
         if not is_git_repo():
             error("Not a git repository.")
@@ -222,23 +228,139 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
 
         sub = parts[1].strip() if len(parts) > 1 else ""
         sub_low = sub.lower()
+        arg = parts[2].strip() if len(parts) > 2 else ""
 
         if sub_low == "status" or sub == "":
             console.print(git_status())
+
         elif sub_low == "log":
             console.print(git_log())
-        elif sub_low.startswith("push"):
-            result = git_push()
-            success(result) if not result.startswith("[ERROR]") else error(result)
-        else:
-            # Treat as commit message
-            result = git_commit(sub)
+
+        elif sub_low == "branches":
+            console.print(git_branches())
+
+        elif sub_low == "branch":
+            if not arg:
+                error("Usage: /git branch <name>")
+            else:
+                result = git_branch_create(arg)
+                success(result) if not result.startswith("[ERROR]") else error(result)
+
+        elif sub_low == "checkout":
+            if not arg:
+                error("Usage: /git checkout <branch>")
+            else:
+                current = git_current_branch()
+                console.print(f"Switching from [bold]{current}[/bold] → [bold]{arg}[/bold]")
+                try:
+                    confirm = input("Confirm? [y/N] ").strip().lower()
+                except (EOFError, KeyboardInterrupt):
+                    confirm = "n"
+                if confirm == "y":
+                    result = git_checkout(arg)
+                    success(result) if not result.startswith("[ERROR]") else error(result)
+                else:
+                    info("Checkout cancelled.")
+
+        elif sub_low == "merge":
+            if not arg:
+                error("Usage: /git merge <branch>")
+            else:
+                result = git_merge(arg)
+                if result.startswith("OK:"):
+                    success(result[3:].strip() or "Merged successfully.")
+                elif result.startswith("[CONFLICT]"):
+                    warning(result)
+                    # Conflict resolution flow
+                    conflict_files = detect_conflicts()
+                    if conflict_files:
+                        console.print(f"\n[bold red]Conflicts in {len(conflict_files)} file(s):[/bold red]")
+                        for cf in conflict_files:
+                            console.print(f"  • {cf}")
+                        try:
+                            resolve = input("\nAsk Codey to resolve conflicts? [y/N] ").strip().lower()
+                        except (EOFError, KeyboardInterrupt):
+                            resolve = "n"
+                        if resolve == "y":
+                            conflict_context = []
+                            for cf in conflict_files[:3]:  # cap at 3 files
+                                sections = get_conflict_sections(cf)
+                                if sections.get("has_conflicts"):
+                                    conflict_context.append(
+                                        f"File: {cf}\n"
+                                        f"OURS (HEAD):\n{sections['ours']}\n"
+                                        f"THEIRS ({arg}):\n{sections['theirs']}\n"
+                                        f"({sections['count']} conflict block(s))"
+                                    )
+                            prompt = (
+                                f"There are merge conflicts after merging branch '{arg}'. "
+                                f"Please resolve them.\n\n" + "\n\n".join(conflict_context)
+                            )
+                            history = run_agent(prompt, history, ctx)
+                    else:
+                        info("Resolve conflicts manually, then run: /git commit")
+                else:
+                    error(result)
+
+        elif sub_low == "diff":
+            diff = git_diff_for_commit()
+            console.print(diff or "(no diff)")
+
+        elif sub_low == "commit":
+            # Smart AI-generated commit message
+            if arg:
+                # Message provided directly: /git commit <message>
+                result = git_commit(arg)
+            else:
+                # Generate message from diff
+                diff = git_diff_for_commit()
+                if diff == "(no diff available)":
+                    info("Nothing to commit — working tree clean.")
+                    return True, history
+                console.print("[dim]Analyzing diff to generate commit message…[/dim]")
+                history_msgs = git_commit_log_messages()
+                suggested = generate_commit_message(diff, history_msgs)
+                console.print(f"\nSuggested message: [bold cyan]{suggested}[/bold cyan]")
+                try:
+                    user_msg = input("Press Enter to accept, or type a new message: ").strip()
+                except (EOFError, KeyboardInterrupt):
+                    info("Commit cancelled.")
+                    return True, history
+                final_msg = user_msg if user_msg else suggested
+                result = git_commit(final_msg)
             if result.startswith("[ERROR]"):
                 error(result)
             elif result.startswith("Nothing"):
                 info(result)
             else:
                 success(result)
+
+        elif sub_low.startswith("push"):
+            result = git_push()
+            success(result) if not result.startswith("[ERROR]") else error(result)
+
+        elif sub_low == "conflicts":
+            conflict_files = detect_conflicts()
+            if not conflict_files:
+                success("No conflicts detected.")
+            else:
+                console.print(f"[bold red]Conflicted files ({len(conflict_files)}):[/bold red]")
+                for cf in conflict_files:
+                    sections = get_conflict_sections(cf)
+                    blocks = sections.get("count", "?")
+                    console.print(f"  • {cf}  ({blocks} block(s))")
+
+        else:
+            # Backward compat: treat sub+arg as a raw commit message
+            raw_msg = (sub + (" " + arg if arg else "")).strip()
+            result = git_commit(raw_msg)
+            if result.startswith("[ERROR]"):
+                error(result)
+            elif result.startswith("Nothing"):
+                info(result)
+            else:
+                success(result)
+
         return True, history
 
     if low.startswith("/sessions"):

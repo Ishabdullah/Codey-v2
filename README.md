@@ -13,12 +13,20 @@ Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-ba
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v2.5.4 · Learning AI Agent · Termux
+  v2.5.5 · Learning AI Agent · Termux
 ```
 
 ---
 
 ## Key Features
+
+### 🌿 Git Enhancements (v2.5.5)
+- **Branch management**: `/git branches` lists all branches; `/git branch <name>` creates and switches; `/git checkout <name>` switches with confirmation prompt
+- **Smart merge**: `/git merge <branch>` merges with automatic conflict detection and resolution flow
+- **AI commit messages**: `/git commit` reads the diff and generates a meaningful message — you review and accept or edit before it commits
+- **Conventional commits**: Detects if your project uses `feat:` / `fix:` style and matches it automatically
+- **Conflict resolution**: Shows which files conflict, presents both sides, asks if Codey should resolve
+- **`/git conflicts`**: List all conflicted files at any time
 
 ### 🎙️ Voice Interface (v2.5.1)
 - **Text-to-Speech**: Every response is spoken aloud via `termux-tts-speak` — code blocks and markdown filtered out, only prose spoken
@@ -294,6 +302,33 @@ Override which linter is used: `CODEY_LINTER=flake8 python main.py`
 
 ---
 
+## Git Enhancements (v2.5.5)
+
+```bash
+/git                       # Show status
+/git branches              # List all branches (current highlighted)
+/git branch feature-xyz    # Create and switch to new branch
+/git checkout main         # Switch branch (confirmation prompt)
+/git merge feature-xyz     # Merge with conflict detection
+/git commit                # AI generates message from diff → you approve
+/git commit "fix: typo"    # Commit with exact message
+/git diff                  # Show current diff
+/git push                  # Push to remote
+/git conflicts             # List all conflicted files
+```
+
+**Smart commit messages:** When you run `/git commit` without a message, Codey reads the current
+diff and generates a commit message using the model. If your project already uses
+[conventional commits](https://www.conventionalcommits.org/) (`feat:`, `fix:`, `docs:` etc.)
+it will match that format automatically. You see the suggested message and can accept or
+type a replacement before anything is committed.
+
+**Conflict resolution flow:** After a merge with conflicts, Codey lists the conflicted files
+and asks if you want it to resolve them. It parses both sides of each conflict and runs the
+agent with full context to propose a resolution, which you review before it is written.
+
+---
+
 ## Quick Start
 
 ### One-Line Installation
@@ -448,7 +483,16 @@ codeyd2 status
 | `/read <file>` | Load file into context |
 | `/diff [file]` | Show what Codey changed |
 | `/undo [file]` | Restore file to previous version |
-| `/git [msg]` | Git status / commit / push |
+| `/git` | Git status |
+| `/git branches` | List all branches (current highlighted) (v2.5.5) |
+| `/git branch <name>` | Create and switch to new branch (v2.5.5) |
+| `/git checkout <name>` | Switch branch with confirmation (v2.5.5) |
+| `/git merge <branch>` | Merge with conflict detection + resolution (v2.5.5) |
+| `/git commit` | AI-generated commit message from diff (v2.5.5) |
+| `/git commit <msg>` | Commit with exact message |
+| `/git conflicts` | List conflicted files (v2.5.5) |
+| `/git diff` | Show current diff |
+| `/git push` | Push to remote |
 | `/search <pattern>` | Grep across project files |
 | `/context` | Show loaded files |
 | `/clear` | Clear history and session |
@@ -919,7 +963,8 @@ rollback(cp_id)
 │   ├── learning.py         # Learning system coordinator (v2.2.0+)
 │   ├── preferences.py      # User preference learning & NL detection (v2.5.0)
 │   ├── voice.py            # TTS + STT via Termux:API (v2.5.1)
-│   └── linter.py           # Static analysis: ruff/flake8/mypy/ast (v2.5.2)
+│   ├── linter.py           # Static analysis: ruff/flake8/mypy/ast (v2.5.2)
+│   └── githelper.py        # Git: branches, merge, conflict detection, smart commits (v2.5.5)
 ├── tools/
 │   └── file_tools.py       # Refactored file operations
 ├── utils/
@@ -1141,6 +1186,7 @@ ls -la ~/models/qwen2.5-1.5b/
 
 | Version | Highlights |
 |---------|------------|
+| **v2.5.5** | **Git Enhancements** — Branch management (`/git branches/branch/checkout/merge`); AI-generated commit messages with conventional commits detection; merge conflict detection, parsing, and agent-assisted resolution; `/git commit` interactive approve flow; `/git diff` and `/git conflicts` commands |
 | **v2.5.4** | **Peer delegation + QA classifier fixes** — "ask gemini/claude/qwen to X" now actually calls that peer CLI and applies the result; added "replace", "rename", "change", "ask", "call" etc to action keywords (fixes "could you replace" being classified as QA); `enrich_message` patch_file hints now include replace/rename/append |
 | **v2.5.3** | **Bug fixes** — Agent loop after simple writes fixed: added `\nUser:` / `\nHuman:` / `\nA:` stop sequences to MODEL_CONFIG + HALLUCINATION_MARKERS; fixed `extra_stop` tokens (e.g. `</tool>`) never reaching llama-server (now passed through `server.infer(stop=...)`); auto-lint only injects errors to agent context (warnings go to terminal only, preventing unused-import loop); CPU monitor fixed with 250ms self-contained mini-sample when delta is near-zero |
 | **v2.5.2** | **Static Analysis & Code Review** — Auto-lint after every Python write; pre-write syntax gate blocks broken files; `/review <file>` multi-linter scan (ruff/flake8/mypy) with agent fix; `core/linter.py` |
