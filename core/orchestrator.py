@@ -7,10 +7,17 @@ from core.taskqueue import TaskQueue, STATUS_PENDING, STATUS_RUNNING
 from utils.logger import info, warning
 
 PLAN_PROMPT = """Break the task into 2-5 numbered steps. Max 5 steps.
-Each step must be a single concrete action: create a file, edit a file, or run a command.
-NEVER include steps like "open in editor", "save file", "navigate to directory", "review code", or "think about structure".
-NEVER include git init, .gitignore creation, initial commit, or project-setup steps when already in an existing git repository.
-NEVER overwrite existing project files like .gitignore, README.md, or requirements.txt unless the task explicitly asks for it.
+Each step must be a single concrete action with a SELF-CONTAINED description.
+Write steps like: "Write app.py: HTTP server with /account, /deposit, /withdraw, /balance endpoints using sqlite3"
+NOT like: "Edit app.py to include the following code:" (incomplete — agent won't know what code)
+NOT like: "Create app.py" then "Edit app.py to add..." (create AND fill in ONE step)
+
+RULES:
+- If a file needs content, describe that content briefly in the same step.
+- One step per file. Never split "create" and "fill" into separate steps for the same file.
+- NEVER include steps like "open in editor", "save file", "navigate to directory", or "review code".
+- NEVER include git init, .gitignore creation, initial commit, or project-setup steps when already in an existing git repository.
+- NEVER overwrite existing project files like .gitignore, README.md, or requirements.txt unless the task explicitly asks for it.
 Output ONLY the numbered list of actions."""
 
 COMPLEX_SIGNALS = [
@@ -171,9 +178,20 @@ def run_queue(queue, yolo=False):
             if prior_results:
                 context_prefix = ('Previous steps completed:\n' +
                     '\n'.join(f'- {r}' for r in prior_results[-3:]) +
-                    '\n\nNow: ')
+                    '\n\n')
 
-            prompt = context_prefix + task.description
+            # Always inject the full original request so the agent knows the
+            # complete spec — step descriptions alone are often too short to
+            # carry all the necessary detail (e.g. exact endpoint names, DB schema).
+            original = getattr(queue, 'original_request', '')
+            if original and original.strip() not in task.description:
+                prompt = (
+                    f"Overall goal: {original}\n\n"
+                    f"{context_prefix}Current step: {task.description}"
+                )
+            else:
+                prompt = context_prefix + task.description
+
             history = []  # isolated context per subtask
 
             try:

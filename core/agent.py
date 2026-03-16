@@ -702,7 +702,8 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                 auto_retries += 1
                 warning("Error detected — auto-retry " + str(auto_retries) + "/" + str(max_retries))
                 messages.append({"role": "assistant", "content": "<tool>\n" + json.dumps(tool_dict) + "\n</tool>"})
-                messages.append({"role": "user", "content": "Error:\n" + last_tool_result + "\n\nFix the implementation file only. Never modify test files. After fixing, run the tests again to verify."})
+                _retry_path = args.get("path", "the file")
+                messages.append({"role": "user", "content": "Error:\n" + last_tool_result + f"\n\nFix the error in {_retry_path}. Use write_file to replace it with the corrected version. Do not modify any other files."})
                 continue
             elif is_error(last_tool_result, name) and auto_retries >= max_retries and not _in_subtask:
                 # Exhausted retries — offer to escalate to a peer CLI
