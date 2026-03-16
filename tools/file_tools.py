@@ -12,6 +12,18 @@ from typing import List, Union
 from core.filesystem import Filesystem, get_filesystem, FilesystemAccessError
 from utils.config import AGENT_CONFIG
 
+# File types that must be created by code, not written as text by the agent.
+# Writing these as plain text produces corrupt/invalid files.
+BINARY_FILE_TYPES = {
+    '.db', '.sqlite', '.sqlite3',            # SQLite databases (binary format)
+    '.gguf', '.bin', '.safetensors',         # ML model files
+    '.so', '.dylib', '.dll',                 # Compiled native libraries
+    '.pyc', '.pyo', '.pyd',                  # Python bytecode
+    '.zip', '.tar', '.gz', '.bz2', '.xz',   # Archives
+    '.jpg', '.jpeg', '.png', '.gif', '.webp', '.ico',  # Images
+    '.pdf',                                  # PDFs
+}
+
 # Files that must never be silently overwritten — always prompt regardless of yolo.
 # These are repo/project metadata files whose loss is hard to recover without git history.
 WRITE_PROTECTED = {
@@ -82,6 +94,34 @@ def tool_write_file(path: str, content: str) -> str:
         import os
         p = Path(os.getcwd()) / path
     file_exists = p.exists() and p.is_file()
+
+    # Block writes that would replace a file with drastically smaller content
+    # (e.g., overwriting 500-line app.py with just a shebang line)
+    if file_exists and p.suffix in ('.py', '.js', '.ts', '.html', '.css'):
+        try:
+            existing_size = p.stat().st_size
+            new_size = len(content.encode('utf-8'))
+            # If existing file is > 200 bytes and new content is < 20% of it, block
+            if existing_size > 200 and new_size < existing_size * 0.2:
+                return (
+                    f"[ERROR] Refusing to overwrite {p.name} ({existing_size} bytes) "
+                    f"with much smaller content ({new_size} bytes). "
+                    f"This looks like a stub or incomplete rewrite. "
+                    f"Write the COMPLETE file content, or use patch_file for small edits."
+                )
+        except Exception:
+            pass
+
+    # Block writes to binary/non-text file types — these must be created by code.
+    if p.suffix.lower() in BINARY_FILE_TYPES:
+        hint = ""
+        if p.suffix.lower() in ('.db', '.sqlite', '.sqlite3'):
+            hint = (
+                " SQLite databases are created automatically when your Python code "
+                "calls sqlite3.connect(). Do NOT create them with write_file — "
+                "just use sqlite3.connect() in your app code and the file appears on first run."
+            )
+        return f"[ERROR] Cannot write {p.name} as a text file.{hint}"
 
     # Protected files: always confirm before overwriting.
     if file_exists and p.name in WRITE_PROTECTED:

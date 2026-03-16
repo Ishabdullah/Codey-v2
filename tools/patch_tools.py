@@ -56,6 +56,20 @@ def tool_patch_file(path: str, old_str: str, new_str: str) -> str:
         if not ask_confirm("Apply patch?"):
             return "[CANCELLED] Patch cancelled."
 
+    # Pre-patch syntax check for Python files: reject patches that break syntax
+    if p.suffix == '.py':
+        try:
+            from core.linter import check_syntax
+            syn_err = check_syntax(new_content, str(p))
+            if syn_err:
+                return (
+                    f"[ERROR] Patch would introduce syntax error: {syn_err}\n"
+                    "Fix the syntax in your patch and try again. "
+                    "Consider using write_file to replace the entire file instead."
+                )
+        except Exception:
+            pass  # linter unavailable — allow patch
+
     snapshot(str(p))
     try:
         p.write_text(new_content, encoding="utf-8")

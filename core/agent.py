@@ -492,6 +492,64 @@ def _detect_peer_delegation(user_message: str):
     return None, None
 
 
+def _auto_apply_peer_code(peer_output):
+    """
+    Extract code blocks from peer CLI output and write them to disk.
+
+    Looks for patterns like:
+      **`app.py`** — description
+      ```python
+      code...
+      ```
+
+    Or:
+      **app.py**
+      ```python
+      code...
+      ```
+
+    Returns list of filenames written, or empty list if none found.
+    """
+    import os
+    files_written = []
+
+    # Pattern: filename header followed by a code block
+    # Matches: **`filename.py`** or **filename.py** or `filename.py`:
+    _block_re = re.compile(
+        r'(?:\*{1,2}`?(\w+\.\w+)`?\*{0,2}|`(\w+\.\w+)`:?)\s*(?:—[^\n]*)?\s*\n'
+        r'```(?:\w+)?\n(.*?)```',
+        re.DOTALL
+    )
+
+    for m in _block_re.finditer(peer_output):
+        fname = m.group(1) or m.group(2)
+        code = m.group(3)
+        if not fname or not code or len(code.strip()) < 50:
+            continue
+        # Only write code files
+        if not any(fname.endswith(ext) for ext in ('.py', '.js', '.ts', '.html', '.css', '.json')):
+            continue
+        # Syntax check for Python files
+        if fname.endswith('.py'):
+            try:
+                from core.linter import check_syntax
+                if check_syntax(code.rstrip(), fname):
+                    continue  # Skip files with syntax errors
+            except Exception:
+                pass
+        # Write the file
+        fpath = os.path.join(os.getcwd(), fname)
+        try:
+            from pathlib import Path as _WP
+            _WP(fpath).write_text(code.rstrip() + '\n', encoding='utf-8')
+            files_written.append(fname)
+            success(f"Written {fname} from peer review ({len(code)} chars)")
+        except Exception as e:
+            warning(f"Failed to write {fname} from peer: {e}")
+
+    return files_written
+
+
 def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, _in_subtask=False):
     # Learn preferences from natural language in the user's message
     _get_learning().learn_from_message(user_message)
@@ -507,23 +565,80 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             _by_name = {c.name: c for c in _mgr.available()}
             if _peer_name in _by_name:
                 _cli = _by_name[_peer_name]
+
+                # For review/check/verify tasks, build rich context with current file contents
+                # so the peer actually has something to review.
+                _REVIEW_KW = {
+                    "check", "review", "verify", "test", "examine",
+                    "correct", "validate", "look at", "is it right", "did i"
+                }
+                _is_review = any(k in _peer_task.lower() for k in _REVIEW_KW)
+                _enriched_task = _peer_task
+                if _is_review:
+                    from pathlib import Path as _PP
+                    _file_parts = []
+                    for _f in sorted(_PP.cwd().iterdir()):
+                        if _f.is_file() and _f.suffix in ('.py', '.js', '.ts', '.txt', '.md', '.json'):
+                            try:
+                                _fc = _f.read_text(encoding='utf-8', errors='replace')
+                                if len(_fc) < 4000:
+                                    _file_parts.append(f"=== {_f.name} ===\n{_fc}")
+                            except Exception:
+                                pass
+                    if _file_parts:
+                        # Find the original goal from history or current message
+                        _orig_goal = user_message
+                        for _hm in reversed(history):
+                            if _hm["role"] == "user" and len(_hm["content"]) > 80:
+                                _orig_goal = _hm["content"][:800]
+                                break
+                        _enriched_task = (
+                            f"Original task that was worked on:\n{_orig_goal}\n\n"
+                            "Current state of project files:\n\n"
+                            + "\n\n".join(_file_parts[:6])
+                            + f"\n\nPlease: {_peer_task}"
+                        )
+
                 info(f"Delegating to {_cli.description}: {_peer_task[:80]}")
-                _output = _mgr.call(_cli, _peer_task)
+                _output = _mgr.call(_cli, _enriched_task)
                 if _output and len(_output.strip()) > 10:
                     _summary = _mgr.summarize_result(_cli.name, _output, _peer_task)
                     # Store peer exchange in history so context is preserved
                     history.append({"role": "user", "content": user_message})
                     history.append({"role": "assistant", "content": _summary})
-                    # Now ask the agent to understand and apply the peer's answer
-                    _follow_up = (
-                        f"The peer CLI {_peer_name} just responded to: '{_peer_task}'\n\n"
-                        f"{_output[:1500]}\n\n"
-                        "If any file changes are needed based on the above, apply them now "
-                        "using write_file or patch_file. Otherwise summarize what was learned."
-                    )
-                    from utils.logger import success as _suc
-                    _suc(f"[Peer: {_peer_name}] done. Applying result...")
-                    return run_agent(_follow_up, history, yolo=yolo, _in_subtask=True)
+
+                    # Auto-extract and write code blocks from peer output.
+                    # The 7B local model struggles to parse large peer responses,
+                    # so we extract ```python blocks with filenames and write them directly.
+                    _files_written = _auto_apply_peer_code(_output)
+
+                    if _files_written:
+                        from utils.logger import success as _suc
+                        _suc(f"[Peer: {_peer_name}] done. Applied {len(_files_written)} file(s): {', '.join(_files_written)}")
+                        # Run tests if the peer provided test files
+                        _has_tests = any('test' in f.lower() for f in _files_written)
+                        if _has_tests:
+                            _follow_up = (
+                                f"Files written from peer review: {', '.join(_files_written)}. "
+                                "Run the tests now with: python -m unittest test_api"
+                            )
+                        else:
+                            _follow_up = (
+                                f"Files written from peer review: {', '.join(_files_written)}. "
+                                "Summarize what was fixed in 2-3 sentences."
+                            )
+                        return run_agent(_follow_up, history, yolo=yolo, _in_subtask=True)
+                    else:
+                        # No code blocks found — fall back to asking agent to interpret
+                        _follow_up = (
+                            f"The peer CLI {_peer_name} responded:\n\n"
+                            f"{_output[:1500]}\n\n"
+                            "If the peer identified bugs or gave code fixes, apply them now "
+                            "using write_file. Otherwise, summarize findings in 2-3 sentences."
+                        )
+                        from utils.logger import success as _suc
+                        _suc(f"[Peer: {_peer_name}] done. Applying result...")
+                        return run_agent(_follow_up, history, yolo=yolo, _in_subtask=True)
                 else:
                     warning(f"Peer '{_peer_name}' returned no output. Continuing locally.")
             else:
@@ -623,6 +738,14 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
     max_retries = 2
     error_log = []        # accumulates error text for peer CLI context
     files_touched = []    # accumulates file paths for peer CLI context
+    # Subtasks writing large files need more steps than simple Q&A.
+    # If running inside the orchestrator (in_subtask) and the message contains
+    # code-generation signals, raise the cap to 10.
+    if _in_subtask:
+        _complex_signals = ["overall goal", "write", "implement", "create", "build", "api", "server"]
+        if any(s in user_message.lower() for s in _complex_signals):
+            max_steps = max(max_steps, 10)
+
     while step < max_steps:
         step += 1
         used, total = get_context_usage(messages)
@@ -752,4 +875,10 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
     warning("Reached max steps (" + str(max_steps) + ").")
     if not _in_subtask:
         check_git_and_offer_commit(user_message, tools_used)
-    return "[Max steps reached]", history
+    # Return a failure marker so run_queue() can flag this subtask as incomplete
+    # instead of silently marking it done. The last tool result is included so
+    # the next subtask knows what was attempted.
+    _incomplete_msg = "[INCOMPLETE] Max steps reached."
+    if last_tool_result and not last_tool_result.startswith("["):
+        _incomplete_msg += " Last result: " + last_tool_result[:200]
+    return _incomplete_msg, history

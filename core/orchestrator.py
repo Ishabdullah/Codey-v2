@@ -6,19 +6,28 @@ from pathlib import Path
 from core.taskqueue import TaskQueue, STATUS_PENDING, STATUS_RUNNING
 from utils.logger import info, warning
 
-PLAN_PROMPT = """Break the task into 2-5 numbered steps. Max 5 steps.
-Each step must be a single concrete action with a SELF-CONTAINED description.
-Write steps like: "Write app.py: HTTP server with /account, /deposit, /withdraw, /balance endpoints using sqlite3"
-NOT like: "Edit app.py to include the following code:" (incomplete — agent won't know what code)
-NOT like: "Create app.py" then "Edit app.py to add..." (create AND fill in ONE step)
+PLAN_PROMPT = """Break the task into 2-3 numbered steps. Max 3 steps.
+Each step WRITES ONE FILE with its COMPLETE content. No verification or setup steps.
+
+EXAMPLE — "Create REST API with tests":
+1. Write app.py: Complete HTTP REST API using http.server.BaseHTTPRequestHandler with all endpoints (/account POST, /deposit POST, /withdraw POST, /balance GET), sqlite3 storage with sqlite3.connect(), atomic transactions, serve on port 8765
+2. Write test_api.py: Start server in a thread, test all endpoints using urllib.request HTTP calls (NOT function imports), assert correct responses and balances, shut down server
+3. Run tests: python -m unittest test_api
+
+BAD plans (DO NOT generate these):
+- "Create app.py" then "Add endpoints to app.py" — NEVER split one file across steps
+- "Implement sqlite3 storage" as a separate step — put it IN the app.py step
+- "Verify the server works" / "Check output" — NEVER include verification steps
+- "Create accounts.db" — NEVER create .db files manually (sqlite3.connect() does it)
 
 RULES:
-- If a file needs content, describe that content briefly in the same step.
-- One step per file. Never split "create" and "fill" into separate steps for the same file.
-- NEVER include steps like "open in editor", "save file", "navigate to directory", or "review code".
-- NEVER include git init, .gitignore creation, initial commit, or project-setup steps when already in an existing git repository.
-- NEVER overwrite existing project files like .gitignore, README.md, or requirements.txt unless the task explicitly asks for it.
-Output ONLY the numbered list of actions."""
+- ONE step per file. All file content described in that step.
+- Test files MUST use HTTP requests (urllib.request), NOT import app functions directly.
+- NEVER use port 8080 — reserved for llama-server. Use 8765 or 9000.
+- NEVER include git init, .gitignore, or project-setup steps.
+- NEVER overwrite .gitignore, README.md, requirements.txt unless explicitly asked.
+- Last step can be a shell command to run tests.
+Output ONLY the numbered list."""
 
 COMPLEX_SIGNALS = [
     'create', 'build', 'implement', 'refactor', 'rewrite',
@@ -105,7 +114,70 @@ def parse_task_list(model_output):
         m = re.match(r'^(\d+)[.)\s]+(.+)$', line)
         if m and len(m.group(2)) > 5:
             tasks.append(m.group(2).strip())
-    return tasks[:5]
+    return _postprocess_plan(tasks[:5])
+
+
+# Steps that produce no useful output — pure verification/review
+_WASTE_PATTERNS = [
+    "verify", "check the", "check output", "review the code",
+    "test the server", "navigate to", "save file", "open browser",
+    "confirm that", "ensure that", "make sure",
+]
+
+# Filename extraction pattern
+_FILE_RE = re.compile(r'\b(\w+\.(?:py|js|ts|html|css|json|yaml|yml|toml|txt|md|sh))\b')
+
+
+def _postprocess_plan(tasks):
+    """
+    Post-process plan steps from the model to fix common issues:
+    1. Merge steps that target the same file
+    2. Remove waste steps (verify, check, review)
+    3. Remove .db/.sqlite creation steps
+    4. Cap at 3 steps
+    """
+    if not tasks:
+        return tasks
+
+    # Remove waste steps
+    filtered = []
+    for t in tasks:
+        t_low = t.lower()
+        # Skip pure verification steps
+        if any(p in t_low for p in _WASTE_PATTERNS) and not any(
+            k in t_low for k in ["write", "create", "implement", "build"]
+        ):
+            continue
+        # Skip .db/.sqlite creation steps
+        if any(ext in t_low for ext in ['.db', '.sqlite', '.sqlite3']) and \
+           any(k in t_low for k in ['create', 'set up', 'initialize']):
+            if not any(k in t_low for k in ['write', 'python', '.py']):
+                continue
+        filtered.append(t)
+
+    if not filtered:
+        return tasks[:1]  # Don't return empty — keep at least one
+
+    # Merge steps targeting the same file
+    merged = []
+    seen_files = {}  # filename -> index in merged list
+    for t in filtered:
+        files_in_step = _FILE_RE.findall(t)
+        merged_into = None
+        for f in files_in_step:
+            if f in seen_files:
+                merged_into = seen_files[f]
+                break
+        if merged_into is not None:
+            # Append this step's description to the existing step
+            merged[merged_into] = merged[merged_into] + "; also: " + t
+        else:
+            idx = len(merged)
+            merged.append(t)
+            for f in files_in_step:
+                seen_files[f] = idx
+
+    return merged[:3]
 
 def plan_tasks(user_message, project_context=''):
     """Ask model to plan the task. Returns TaskQueue."""
@@ -204,8 +276,16 @@ def run_queue(queue, yolo=False):
                         summary = summary[len(prefix):]
                         break
                 
-                queue.mark_done(task.id, summary)
-                prior_results.append(f'Task {task.id}: {task.description[:60]} -> {summary[:80]}')
+                # If the subtask hit max steps without completing, treat as failed
+                # so subsequent tasks know to redo it rather than build on broken state.
+                if summary.startswith("[INCOMPLETE]"):
+                    queue.mark_failed(task.id, summary)
+                    prior_results.append(
+                        f'Task {task.id}: {task.description[:60]} -> INCOMPLETE (hit step limit — needs retry)'
+                    )
+                else:
+                    queue.mark_done(task.id, summary)
+                    prior_results.append(f'Task {task.id}: {task.description[:60]} -> {summary[:80]}')
             except KeyboardInterrupt:
                 raise
             except Exception as e:
