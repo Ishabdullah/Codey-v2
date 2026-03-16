@@ -43,12 +43,19 @@ ROGUE_TAG_MAP = {
 }
 
 HALLUCINATION_MARKERS = [
-    "\nuser\n", "\nUSER\n", "\nUser\n",
+    # Role-play turn boundaries — model hallucinating the next user message
+    "\nUser:", "\nUser\n", "\nUSER\n",
+    "\nHuman:", "\nHuman\n",
+    "\nA: ", "\nA:\n",
+    # Lowercase / mixed variants
+    "\nuser\n", "\nuser:",
     "\nassistant\n", "\nASSISTANT\n", "\nAssistant\n",
     "user\n#", "assistant\n", "user\ncreate", "user\nwrite", "user\nedit", "user\nrun",
+    # System-prompt echo markers
     "\n## Loaded Files", "\n## Project Memory", "\n## Current Project",
     "## Project Memory\n", "## Loaded Files\n",
     "## Loaded Files", "## Project Memory",
+    # ChatML tokens
     "<|im_start|>", "<|im_end|>",
 ]
 
@@ -224,6 +231,9 @@ def execute_tool(tool_dict):
         duration = time.time() - start_time
 
         # ── Auto-lint after successful Python file write (Phase 2) ───────────
+        # Only inject ERRORS into agent context (causes agent to self-correct).
+        # Style warnings are shown to the user in the terminal but NOT injected
+        # — otherwise the agent loops trying to fix unused-import noise etc.
         if name in ("write_file", "patch_file") and not result.startswith("[ERROR]"):
             _lpath = args.get("path", "")
             if _lpath.endswith(".py"):
@@ -231,7 +241,19 @@ def execute_tool(tool_dict):
                     from core.linter import run_linter, format_issues
                     _issues, _linter_used = run_linter(_lpath)
                     if _issues:
-                        result += format_issues(_issues)
+                        _errors   = [i for i in _issues if i.severity == "error"]
+                        _warnings = [i for i in _issues if i.severity != "error"]
+                        # Inject errors so the agent fixes them in the next step
+                        if _errors:
+                            result += format_issues(_errors)
+                        # Show warnings to the user without pressuring the agent
+                        if _warnings:
+                            from utils.logger import warning as _lwarn
+                            _lwarn(f"[Linter/{_linter_used}] {len(_warnings)} style warning(s) in {_lpath}:")
+                            for _w in _warnings[:5]:
+                                _lwarn(f"  Line {_w.line}: [{_w.code}] {_w.message}")
+                            if len(_warnings) > 5:
+                                _lwarn(f"  ... and {len(_warnings) - 5} more (run /review for full list)")
                 except Exception:
                     pass  # linter unavailable — continue normally
 

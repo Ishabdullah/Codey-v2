@@ -39,7 +39,9 @@ MODEL_CONFIG = {
     "top_k":          40,
     "batch_size":     256,
     "kv_type":        "q8_0",
-    "stop": ["<|im_end|>", "<|im_start|>"],
+    # Stop the model before it can role-play the next user turn.
+    # "\nUser:" matches "User: Tool result:" and "User: <follow-up>" hallucinations.
+    "stop": ["<|im_end|>", "<|im_start|>", "\nUser:", "\nHuman:", "\nA:"],
 }
 
 AGENT_CONFIG = {
@@ -65,5 +67,5 @@ THERMAL_CONFIG["original_threads"] = MODEL_CONFIG.get("n_threads", 4)
 CODE_DIR = Path(__file__).parent.parent.resolve()
 WORKSPACE_ROOT = Path(os.getcwd()).resolve()
 
-CODEY_VERSION = "2.5.2"
+CODEY_VERSION = "2.5.3"
 CODEY_NAME    = "Codey-v2"

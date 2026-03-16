@@ -212,7 +212,7 @@ def _infer_http(messages: list[dict], stream: bool, extra_stop: list,
     # Run inference
     start = time.time()
     try:
-        output = server.infer(prompt, max_tokens=MODEL_CONFIG.get("max_tokens", 1024))
+        output = server.infer(prompt, max_tokens=MODEL_CONFIG.get("max_tokens", 1024), stop=stop)
 
         if output is None:
             return "[ERROR] Inference failed"

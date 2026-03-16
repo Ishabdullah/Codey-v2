@@ -139,27 +139,55 @@ class SystemMonitor:
             pass
 
     def _read_cpu(self) -> float:
+        # Try psutil first — but only trust it when it returns > 0.
+        # psutil.cpu_percent(interval=None) returns 0.0 on its first ever call
+        # and can return 0.0 on some Android builds regardless.  Fall through
+        # to /proc/stat in both cases.
         try:
             import psutil
-            # interval=0.5 blocks briefly but gives an accurate reading every time.
-            # interval=None returns 0.0 on first call and requires a prior seed.
-            return psutil.cpu_percent(interval=0.5)
+            val = psutil.cpu_percent(interval=None)
+            if val > 0.0:
+                return val
         except ImportError:
-            return self._read_cpu_proc()
+            pass
+        return self._read_cpu_proc()
 
     def _read_cpu_proc(self) -> float:
-        try:
+        """
+        Calculate CPU% from /proc/stat deltas.
+
+        If the delta is too small (< 20 ticks — happens when called immediately
+        after seeding, or when the background thread woke up faster than expected)
+        we do a self-contained 250 ms mini-sample so the first render() call
+        already shows a real value instead of 0.0.
+        """
+        def _stat():
             with open("/proc/stat") as f:
                 fields = list(map(int, f.readline().split()[1:]))
             idle  = fields[3] + (fields[4] if len(fields) > 4 else 0)
             total = sum(fields)
-            d_idle  = idle  - self._prev_idle
-            d_total = total - self._prev_total
-            self._prev_idle  = idle
-            self._prev_total = total
-            if d_total == 0:
+            return idle, total
+
+        try:
+            idle1, total1 = _stat()
+            d_idle  = idle1  - self._prev_idle
+            d_total = total1 - self._prev_total
+
+            if d_total < 20:
+                # Delta too small — seed and do a fresh 250 ms sample
+                time.sleep(0.25)
+                idle2, total2 = _stat()
+                d_idle  = idle2  - idle1
+                d_total = total2 - total1
+                self._prev_idle  = idle2
+                self._prev_total = total2
+            else:
+                self._prev_idle  = idle1
+                self._prev_total = total1
+
+            if d_total <= 0:
                 return 0.0
-            return 100.0 * (1.0 - d_idle / d_total)
+            return max(0.0, min(100.0, 100.0 * (1.0 - d_idle / d_total)))
         except Exception:
             return 0.0
 

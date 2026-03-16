@@ -194,11 +194,28 @@ class LlamaServer:
         except Exception:
             return False
 
-    def infer(self, prompt: str, max_tokens: int = None) -> Optional[str]:
-        """Run inference via HTTP API."""
+    def infer(self, prompt: str, max_tokens: int = None,
+              stop: list = None) -> Optional[str]:
+        """
+        Run inference via HTTP API.
+
+        Args:
+            prompt:     Formatted prompt string.
+            max_tokens: Override max output tokens.
+            stop:       Extra stop sequences to merge with MODEL_CONFIG["stop"].
+                        Callers should pass the combined list so extra_stop tokens
+                        (e.g. "</tool>") are honoured by the server.
+        """
         if not self._started:
             error("llama-server not running")
             return None
+
+        # Merge caller-supplied stop list with configured defaults
+        base_stop = list(MODEL_CONFIG.get("stop", []))
+        if stop:
+            for s in stop:
+                if s not in base_stop:
+                    base_stop.append(s)
 
         # Retry logic for transient errors
         max_retries = 3
@@ -214,7 +231,7 @@ class LlamaServer:
                     "top_p": MODEL_CONFIG["top_p"],
                     "top_k": MODEL_CONFIG["top_k"],
                     "repeat_penalty": MODEL_CONFIG["repeat_penalty"],
-                    "stop": MODEL_CONFIG.get("stop", []),
+                    "stop": base_stop,
                     "stream": False,
                 }
 

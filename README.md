@@ -13,7 +13,7 @@ Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-ba
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v2.5.2 · Learning AI Agent · Termux
+  v2.5.3 · Learning AI Agent · Termux
 ```
 
 ---
@@ -1141,6 +1141,7 @@ ls -la ~/models/qwen2.5-1.5b/
 
 | Version | Highlights |
 |---------|------------|
+| **v2.5.3** | **Bug fixes** — Agent loop after simple writes fixed: added `\nUser:` / `\nHuman:` / `\nA:` stop sequences to MODEL_CONFIG + HALLUCINATION_MARKERS; fixed `extra_stop` tokens (e.g. `</tool>`) never reaching llama-server (now passed through `server.infer(stop=...)`); auto-lint only injects errors to agent context (warnings go to terminal only, preventing unused-import loop); CPU monitor fixed with 250ms self-contained mini-sample when delta is near-zero |
 | **v2.5.2** | **Static Analysis & Code Review** — Auto-lint after every Python write; pre-write syntax gate blocks broken files; `/review <file>` multi-linter scan (ruff/flake8/mypy) with agent fix; `core/linter.py` |
 | **v2.5.1** | **Voice Interface** — TTS via `termux-tts-speak`, STT via `termux-speech-to-text`; `/voice on/off/listen/rate/pitch`; blank-Enter triggers voice input in REPL; settings persist across sessions; `core/voice.py` |
 | **v2.5.0** | **Peer CLI Escalation** - Auto-escalate to Claude Code, Gemini CLI, Qwen CLI on retry exhaustion; `/peer` command for manual escalation; crash detection for Android ARM64 native module issues; enhanced learning with NL preference extraction, expanded categories, CODEY.md sync; self-review fix auto-loads own source files |
