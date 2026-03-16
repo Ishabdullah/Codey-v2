@@ -412,6 +412,72 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
         
         return True, history
 
+    # ── /review ──────────────────────────────────────────────────────────────
+    if low.startswith("/review"):
+        from core.linter import run_all_linters, get_available_linters
+        parts = cmd.split(maxsplit=1)
+        if len(parts) < 2:
+            info("Usage: /review <file.py>")
+            return True, history
+
+        filepath = parts[1].strip()
+        from pathlib import Path as _P
+        if not _P(filepath).exists():
+            error(f"File not found: {filepath}")
+            return True, history
+
+        available = get_available_linters()
+        if not available:
+            warning("No linters installed. Get better results with: pip install ruff")
+
+        console.print(f"\n[bold]Code Review:[/bold] {filepath}\n")
+        all_results = run_all_linters(filepath)
+        total_issues = 0
+        review_lines = []
+
+        for tool_name, issues in all_results:
+            if tool_name == "syntax" and not issues:
+                continue   # skip clean syntax row — clutters the output
+            errors_only = [i for i in issues if i.severity == "error"]
+            warnings_only = [i for i in issues if i.severity != "error"]
+            if issues:
+                console.print(f"  [bold cyan]{tool_name}[/bold cyan] — {len(issues)} issue(s):")
+                for issue in (errors_only + warnings_only)[:20]:
+                    color = "red" if issue.severity == "error" else "yellow"
+                    sym = "✗" if issue.severity == "error" else "⚠"
+                    console.print(f"    [{color}]{sym} Line {issue.line}[/{color}] [{issue.code}] {issue.message}")
+                    review_lines.append(f"Line {issue.line}: [{issue.code}] {issue.message}")
+                if len(issues) > 20:
+                    console.print(f"    [dim]... and {len(issues) - 20} more[/dim]")
+                total_issues += len(issues)
+            else:
+                console.print(f"  [bold cyan]{tool_name}[/bold cyan] — [green]clean[/green]")
+
+        if not all_results:
+            console.print("  [dim]No linters available. Run: pip install ruff[/dim]")
+
+        console.print(f"\n  [bold]Total:[/bold] {total_issues} issue(s)\n")
+
+        # Offer agent explanation + fix
+        if total_issues > 0 and review_lines:
+            try:
+                ans = console.input("  Ask Codey to explain and fix? [y/N]: ").strip().lower()
+                if ans in ("y", "yes"):
+                    ctx_block = "\n".join(review_lines[:15])
+                    response, history = run_agent(
+                        f"Review {filepath} and fix these linter issues (read the file first):\n{ctx_block}",
+                        history, yolo=yolo,
+                    )
+                    if response and not response.startswith("["):
+                        separator()
+                        console.print(f"\n[bold green]Codey-v2:[/bold green] {response}")
+                        separator()
+                    from core.sessions import save_session
+                    save_session(history)
+            except (KeyboardInterrupt, EOFError):
+                pass
+        return True, history
+
     # ── /voice ───────────────────────────────────────────────────────────────
     if low.startswith("/voice"):
         from core.voice import get_voice
@@ -531,6 +597,10 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
   /context               Show loaded files and sizes
   /diff [file]           Show what Codey-v2 changed (colored diff)
   /undo [file]           Restore file to previous version
+
+[bold]Code Review (v2.5.2):[/bold]
+  /review <file.py>      Run all linters + optional agent fix
+  (auto-lint runs after every file write — no command needed)
 
 [bold]Search:[/bold]
   /search <pattern>      Grep across all project files

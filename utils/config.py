@@ -65,5 +65,5 @@ THERMAL_CONFIG["original_threads"] = MODEL_CONFIG.get("n_threads", 4)
 CODE_DIR = Path(__file__).parent.parent.resolve()
 WORKSPACE_ROOT = Path(os.getcwd()).resolve()
 
-CODEY_VERSION = "2.5.1"
+CODEY_VERSION = "2.5.2"
 CODEY_NAME    = "Codey-v2"

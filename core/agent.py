@@ -203,9 +203,38 @@ def execute_tool(tool_dict):
                 try: old_content = p.read_text()
                 except: pass
         
+        # ── Pre-write syntax gate (Phase 2) ──────────────────────────────────
+        # Block Python writes that have broken syntax before touching disk.
+        if name == "write_file":
+            _wpath = args.get("path", "")
+            _wcontent = args.get("content", "")
+            if _wpath.endswith(".py") and _wcontent:
+                try:
+                    from core.linter import check_syntax
+                    _syn_err = check_syntax(_wcontent, _wpath)
+                    if _syn_err:
+                        return (
+                            f"[ERROR] Pre-write syntax check failed: {_syn_err}\n"
+                            "Fix the syntax error and try writing the file again."
+                        )
+                except Exception:
+                    pass  # linter unavailable — allow write
+
         result = TOOLS[name](args)
         duration = time.time() - start_time
-        
+
+        # ── Auto-lint after successful Python file write (Phase 2) ───────────
+        if name in ("write_file", "patch_file") and not result.startswith("[ERROR]"):
+            _lpath = args.get("path", "")
+            if _lpath.endswith(".py"):
+                try:
+                    from core.linter import run_linter, format_issues
+                    _issues, _linter_used = run_linter(_lpath)
+                    if _issues:
+                        result += format_issues(_issues)
+                except Exception:
+                    pass  # linter unavailable — continue normally
+
         # Learn from successful file operations
         if name in ("write_file", "patch_file") and not result.startswith("[ERROR]"):
             # Learn preferences from generated content

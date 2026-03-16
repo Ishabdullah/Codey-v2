@@ -13,12 +13,27 @@ Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-ba
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v2.5.0 · Learning AI Agent · Termux
+  v2.5.2 · Learning AI Agent · Termux
 ```
 
 ---
 
 ## Key Features
+
+### 🎙️ Voice Interface (v2.5.1)
+- **Text-to-Speech**: Every response is spoken aloud via `termux-tts-speak` — code blocks and markdown filtered out, only prose spoken
+- **Speech-to-Text**: Press Enter on a blank line (in voice mode) to speak your task via `termux-speech-to-text`
+- **Voice Mode Toggle**: `/voice on` / `/voice off` — preference saved across sessions
+- **Configurable**: `/voice rate 1.5` (speed), `/voice pitch 0.9`, engine, language
+- **Interrupt**: Ctrl+C stops speech mid-sentence
+- **Requires**: Termux:API app + `pkg install termux-api`
+
+### 🔍 Static Analysis & Code Review (v2.5.2)
+- **Auto-lint on write**: Every Python file Codey writes is automatically linted — issues appended to agent context so it can self-correct
+- **Pre-write syntax gate**: Python files with broken syntax are blocked before they touch disk — agent retries with the error
+- **`/review <file>`**: Full multi-linter scan (ruff + flake8 + mypy + syntax) with colored output, then optional agent fix
+- **Tool priority**: ruff → flake8 → mypy → ast (uses first available; override with `CODEY_LINTER=flake8`)
+- **No tools required**: Syntax checking works with zero external tools via Python's `ast.parse`
 
 ### 🤝 Peer CLI Escalation (v2.5.0)
 - **Auto-escalation**: When Codey hits max retries, it can call Claude Code, Gemini CLI, or Qwen CLI for help
@@ -234,6 +249,51 @@ On Android ARM64, some CLIs crash at startup due to missing native modules (e.g.
 
 ---
 
+## Voice Interface (v2.5.1)
+
+Requires Termux:API app (Play Store / F-Droid) + `pkg install termux-api`.
+
+```bash
+/voice on              # Enable TTS + STT
+/voice off             # Disable
+/voice listen          # Speak one task, send to agent immediately
+/voice rate 1.3        # Speed up speech (default 1.0)
+/voice pitch 0.9       # Lower pitch
+/voice speak hello     # Test TTS with a word
+```
+
+**In voice mode:**
+- Every Codey response is spoken aloud (markdown/code stripped to prose)
+- Press **Enter on a blank line** to speak your task via STT
+- **Ctrl+C** interrupts speech mid-sentence
+- Settings are saved across sessions in `~/.config/codey-v2/voice_config.json`
+
+---
+
+## Code Review (v2.5.2)
+
+```bash
+/review main.py        # Lint with all available tools
+/review core/agent.py  # Shows errors/warnings, offers agent fix
+```
+
+**Auto-lint:** Every Python file Codey writes is automatically linted — issues are
+fed back to the agent in the same turn so it can self-correct without you asking.
+
+**Pre-write syntax gate:** If Codey generates Python with broken syntax, the write
+is blocked and the error is returned as context so the agent can fix it first.
+
+**Install linters for best results:**
+```bash
+pip install ruff          # Recommended: fastest, comprehensive
+pip install flake8        # Classic alternative
+pip install mypy          # Type checking
+```
+
+Override which linter is used: `CODEY_LINTER=flake8 python main.py`
+
+---
+
 ## Quick Start
 
 ### One-Line Installation
@@ -376,6 +436,11 @@ codeyd2 status
 
 | Command | Description |
 |---------|-------------|
+| `/review <file.py>` | Lint file with all available tools + optional agent fix (v2.5.2) |
+| `/voice` | Show voice status and sub-commands (v2.5.1) |
+| `/voice on` / `/voice off` | Enable/disable TTS+STT voice mode |
+| `/voice listen` | One-shot voice input → send to agent |
+| `/voice rate <n>` | Set TTS speech speed (default 1.0) |
 | `/peer` | List available peer CLIs |
 | `/peer <name> <task>` | Call a specific peer CLI directly |
 | `/peer <task>` | Auto-pick best peer CLI for the task |
@@ -396,6 +461,7 @@ codeyd2 status
 | `ALLOW_SELF_MOD=1` | Enable self-modification (alternative to `--allow-self-mod`) |
 | `CODEY_MODEL` | Override model path |
 | `CODEY_THREADS` | Override thread count |
+| `CODEY_LINTER` | Override linter: `ruff`, `flake8`, `mypy` (v2.5.2) |
 
 ---
 
@@ -851,7 +917,9 @@ rollback(cp_id)
 │   ├── peer_cli.py         # Peer CLI escalation manager (v2.5.0)
 │   ├── peer_shell.py       # PTY/subprocess runners for peer CLIs (v2.5.0)
 │   ├── learning.py         # Learning system coordinator (v2.2.0+)
-│   └── preferences.py      # User preference learning & NL detection (v2.5.0)
+│   ├── preferences.py      # User preference learning & NL detection (v2.5.0)
+│   ├── voice.py            # TTS + STT via Termux:API (v2.5.1)
+│   └── linter.py           # Static analysis: ruff/flake8/mypy/ast (v2.5.2)
 ├── tools/
 │   └── file_tools.py       # Refactored file operations
 ├── utils/
@@ -1073,6 +1141,8 @@ ls -la ~/models/qwen2.5-1.5b/
 
 | Version | Highlights |
 |---------|------------|
+| **v2.5.2** | **Static Analysis & Code Review** — Auto-lint after every Python write; pre-write syntax gate blocks broken files; `/review <file>` multi-linter scan (ruff/flake8/mypy) with agent fix; `core/linter.py` |
+| **v2.5.1** | **Voice Interface** — TTS via `termux-tts-speak`, STT via `termux-speech-to-text`; `/voice on/off/listen/rate/pitch`; blank-Enter triggers voice input in REPL; settings persist across sessions; `core/voice.py` |
 | **v2.5.0** | **Peer CLI Escalation** - Auto-escalate to Claude Code, Gemini CLI, Qwen CLI on retry exhaustion; `/peer` command for manual escalation; crash detection for Android ARM64 native module issues; enhanced learning with NL preference extraction, expanded categories, CODEY.md sync; self-review fix auto-loads own source files |
 | **v2.4.0** | **Hybrid Inference Backend** - Direct llama-cpp-python + Unix socket HTTP + TCP HTTP fallback; accurate architecture diagram; documented Termux constraints |
 | **v2.3.0** | **Fine-tuning Support** - Export interaction data, Unsloth Colab notebooks, LoRA adapter import, off-device training workflow |
