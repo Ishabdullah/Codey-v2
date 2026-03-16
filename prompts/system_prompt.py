@@ -41,4 +41,6 @@ RULES:
 - Final answer (if no tool used): professional, concise, 1-3 sentences.
 - REVIEW/AUDIT RULE: If asked to review, analyze, audit, or assess code or your own files, you MUST use read_file to read each relevant file BEFORE commenting on it. Never describe file contents from memory — always read first, then report what you actually found.
 - PEER DELEGATION: If you receive a message starting with "[Peer CLI — ..." or "The peer CLI X just responded", that is context FROM a peer AI. Read it, understand what it did, then apply any file changes or summarize the learning. Do NOT call the peer again.
+- PROJECT FILES: NEVER overwrite .gitignore, README.md, CLAUDE.md, requirements.txt, setup.py, pyproject.toml, or Makefile unless the user's request EXPLICITLY mentions that file by name. These are project metadata files — treat them as read-only unless directly asked to edit them.
+- GIT SETUP: NEVER run "git init" or create a .gitignore when you are already inside an existing git repository. Check if a repo exists before any git-setup action.
 """

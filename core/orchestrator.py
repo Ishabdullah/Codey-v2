@@ -9,6 +9,8 @@ from utils.logger import info, warning
 PLAN_PROMPT = """Break the task into 2-5 numbered steps. Max 5 steps.
 Each step must be a single concrete action: create a file, edit a file, or run a command.
 NEVER include steps like "open in editor", "save file", "navigate to directory", "review code", or "think about structure".
+NEVER include git init, .gitignore creation, initial commit, or project-setup steps when already in an existing git repository.
+NEVER overwrite existing project files like .gitignore, README.md, or requirements.txt unless the task explicitly asks for it.
 Output ONLY the numbered list of actions."""
 
 COMPLEX_SIGNALS = [
@@ -101,12 +103,22 @@ def parse_task_list(model_output):
 def plan_tasks(user_message, project_context=''):
     """Ask model to plan the task. Returns TaskQueue."""
     from core.inference_v2 import infer
-    system = PLAN_PROMPT
+    plan_prompt = PLAN_PROMPT
     if project_context:
-        system += f'\nProject context:\n{project_context}'
+        plan_prompt += f'\nProject context:\n{project_context}'
+    # Inject git-repo awareness so model never adds "git init / create .gitignore" steps
+    try:
+        from core.githelper import is_git_repo
+        if is_git_repo():
+            plan_prompt += (
+                '\nIMPORTANT: Already inside an existing git repository. '
+                'Do NOT add git init, .gitignore creation, or initial commit steps.'
+            )
+    except Exception:
+        pass
     # Inject prompt directly into user message — more reliable than system role
     messages = [
-        {'role': 'user', 'content': PLAN_PROMPT + '\n\nTask: ' + user_message + '\n\nNumbered steps:'}
+        {'role': 'user', 'content': plan_prompt + '\n\nTask: ' + user_message + '\n\nNumbered steps:'}
     ]
     output = infer(messages, stream=False)
     task_list = parse_task_list(output)

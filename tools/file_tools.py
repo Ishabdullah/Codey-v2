@@ -12,6 +12,18 @@ from typing import List, Union
 from core.filesystem import Filesystem, get_filesystem, FilesystemAccessError
 from utils.config import AGENT_CONFIG
 
+# Files that must never be silently overwritten — always prompt regardless of yolo.
+# These are repo/project metadata files whose loss is hard to recover without git history.
+WRITE_PROTECTED = {
+    ".gitignore",
+    "README.md", "readme.md",
+    "CLAUDE.md", "CODEY.md",
+    "requirements.txt", "requirements-dev.txt",
+    "setup.py", "setup.cfg", "pyproject.toml",
+    "Makefile",
+    ".env",
+}
+
 # Global filesystem instance
 _fs: Filesystem = None
 _fs_allow_self_mod: bool = False
@@ -50,14 +62,39 @@ def tool_read_file(path: str) -> str:
 def tool_write_file(path: str, content: str) -> str:
     """
     Write file content.
-    
+
+    - WRITE_PROTECTED files (e.g. .gitignore, README.md) always require
+      explicit confirmation when the file already exists.
+    - All other existing files require confirmation when AGENT_CONFIG
+      confirm_write is True.
+
     Args:
         path: Path to file
         content: Content to write
-        
+
     Returns:
         Success message or error message
     """
+    from utils.logger import confirm as ask_confirm, warning as log_warning
+
+    p = Path(path)
+    if not p.is_absolute():
+        import os
+        p = Path(os.getcwd()) / path
+    file_exists = p.exists() and p.is_file()
+
+    # Protected files: always confirm before overwriting.
+    if file_exists and p.name in WRITE_PROTECTED:
+        log_warning(f"Attempting to overwrite protected file: {path}")
+        if not ask_confirm(f"Really overwrite {p.name}?"):
+            return f"[CANCELLED] Overwrite of {path} cancelled."
+
+    # Regular files: confirm if the flag is set.
+    elif file_exists and AGENT_CONFIG.get("confirm_write"):
+        log_warning(f"About to overwrite: {path}")
+        if not ask_confirm(f"Overwrite {path}?"):
+            return f"[CANCELLED] Overwrite of {path} cancelled."
+
     try:
         return _get_fs().write(path, content)
     except FilesystemAccessError as e:
