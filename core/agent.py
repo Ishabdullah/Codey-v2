@@ -428,8 +428,12 @@ def enrich_message(user_message):
     loaded = list_loaded()
     if not loaded:
         return user_message
-    fix_keywords = ["fix", "correct", "bug", "wrong", "error", "broken",
-                    "update", "change", "edit", "modify", "patch"]
+    fix_keywords = [
+        "fix", "correct", "bug", "wrong", "error", "broken",
+        "update", "change", "edit", "modify", "patch",
+        "replace", "rename", "swap", "convert", "append",
+        "insert", "move", "add", "remove", "delete",
+    ]
     if any(kw in user_message.lower() for kw in fix_keywords):
         return (
             user_message + "\n\n"
@@ -466,9 +470,68 @@ def check_git_and_offer_commit(user_message, tools_used):
         else:
             success(f"Committed: {msg}")
 
+def _detect_peer_delegation(user_message: str):
+    """
+    Detect phrases like:
+      "ask gemini to X"   "have claude do X"   "call qwen and X"
+      "use gemini to X"   "tell claude to X"   "let qwen X"
+      "get claude to X"
+
+    Returns (peer_name, task_string) or (None, None).
+    """
+    _PEER_NAMES = ["claude", "gemini", "qwen"]
+    _pattern = re.compile(
+        r'\b(?:ask|call|have|tell|use|get|let)\s+('
+        + '|'.join(_PEER_NAMES)
+        + r')\s+(?:to\s+|and\s+|do\s+|to\s+do\s+|to\s+help\s+with\s+)?(.+)',
+        re.IGNORECASE,
+    )
+    m = _pattern.search(user_message)
+    if m:
+        return m.group(1).lower(), m.group(2).strip()
+    return None, None
+
+
 def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, _in_subtask=False):
     # Learn preferences from natural language in the user's message
     _get_learning().learn_from_message(user_message)
+
+    # ── Explicit peer delegation ──────────────────────────────────────────────
+    # Handle: "ask gemini to X", "have claude do X", etc.
+    # The peer runs, its output is injected as context, then the agent applies it.
+    if not _in_subtask:
+        _peer_name, _peer_task = _detect_peer_delegation(user_message)
+        if _peer_name and _peer_task:
+            from core.peer_cli import get_peer_cli_manager
+            _mgr = get_peer_cli_manager()
+            _by_name = {c.name: c for c in _mgr.available()}
+            if _peer_name in _by_name:
+                _cli = _by_name[_peer_name]
+                info(f"Delegating to {_cli.description}: {_peer_task[:80]}")
+                _output = _mgr.call(_cli, _peer_task)
+                if _output and len(_output.strip()) > 10:
+                    _summary = _mgr.summarize_result(_cli.name, _output, _peer_task)
+                    # Store peer exchange in history so context is preserved
+                    history.append({"role": "user", "content": user_message})
+                    history.append({"role": "assistant", "content": _summary})
+                    # Now ask the agent to understand and apply the peer's answer
+                    _follow_up = (
+                        f"The peer CLI {_peer_name} just responded to: '{_peer_task}'\n\n"
+                        f"{_output[:1500]}\n\n"
+                        "If any file changes are needed based on the above, apply them now "
+                        "using write_file or patch_file. Otherwise summarize what was learned."
+                    )
+                    from utils.logger import success as _suc
+                    _suc(f"[Peer: {_peer_name}] done. Applying result...")
+                    return run_agent(_follow_up, history, yolo=yolo, _in_subtask=True)
+                else:
+                    warning(f"Peer '{_peer_name}' returned no output. Continuing locally.")
+            else:
+                warning(
+                    f"Peer '{_peer_name}' not available "
+                    f"({', '.join(_by_name) or 'none installed'}). Continuing locally."
+                )
+
     used, total = get_context_usage([{"role": "system", "content": build_system_prompt()}])
     if used < total * 0.5:
         auto_load_from_prompt(user_message)
@@ -523,6 +586,11 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
         "implement", "generate", "rewrite", "deploy", "setup", "configure",
         "review", "analyze", "analyse", "audit", "examine", "inspect", "assess",
         "read", "look at", "show me", "check",
+        # Previously missing — caused QA false-positives for real edit requests:
+        "replace", "rename", "swap", "convert", "change", "append", "insert",
+        "move", "copy", "print", "output", "display", "open",
+        # Peer delegation triggers — "ask gemini to X" should never be QA:
+        "ask", "call", "have", "use",
     ]
     _has_action = any(k in msg_low for k in _action_kws)
     _question_starters = (

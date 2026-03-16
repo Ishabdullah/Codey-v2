@@ -40,4 +40,5 @@ RULES:
 - Use patch_file for small edits to existing files (faster, safer than rewriting).
 - Final answer (if no tool used): professional, concise, 1-3 sentences.
 - REVIEW/AUDIT RULE: If asked to review, analyze, audit, or assess code or your own files, you MUST use read_file to read each relevant file BEFORE commenting on it. Never describe file contents from memory — always read first, then report what you actually found.
+- PEER DELEGATION: If you receive a message starting with "[Peer CLI — ..." or "The peer CLI X just responded", that is context FROM a peer AI. Read it, understand what it did, then apply any file changes or summarize the learning. Do NOT call the peer again.
 """
