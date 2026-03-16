@@ -13,7 +13,7 @@ Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-ba
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v2.5.5 · Learning AI Agent · Termux
+  v2.6.0 · Learning AI Agent · Termux
 ```
 
 ---
@@ -714,11 +714,11 @@ Edit `~/codey-v2/utils/config.py`:
 
 ```python
 MODEL_CONFIG = {
-    "n_ctx":          4096,      # Context window
+    "n_ctx":          8192,      # Context window (doubled in v2.6.0)
     "n_threads":      4,         # CPU threads
     "n_gpu_layers":   0,         # GPU offload (0 = CPU only)
     "temperature":    0.2,       # Lower = more deterministic
-    "max_tokens":     1024,      # Max response length
+    "max_tokens":     2048,      # Max response length (doubled in v2.6.0)
     "repeat_penalty": 1.1,
 }
 
@@ -767,12 +767,12 @@ THERMAL_CONFIG = {
 ┌─────────────────────────────────────────────────────────┐
 │                   LLM Layer                             │
 │  ── Model router (7B ↔ 1.5B hot-swap)                  │
-│  ── Hybrid backend (v2.4.0):                            │
-│     • Direct llama-cpp-python (if available)            │
-│     • Unix socket HTTP (fallback)                       │
-│     • TCP localhost HTTP (fallback)                     │
+│  ── Chat completions backend (v2.6.0):                  │
+│     • /v1/chat/completions with proper ChatML           │
+│     • llama-server applies model's chat template        │
+│     • HTTP fallback for legacy compatibility            │
 │  ── Thermal management                                  │
-│  ── Backend auto-selection with graceful fallback       │
+│  ── 8K context window, 2048 max response tokens         │
 └─────────────────────────────────────────────────────────┘
                           │
                           ▼
@@ -952,8 +952,8 @@ rollback(cp_id)
 │   ├── embeddings.py       # Sentence-transformers integration
 │   ├── router.py           # Model routing heuristic
 │   ├── loader_v2.py        # Model loading/hot-swap
-│   ├── inference_v2.py     # Dual-model inference
-│   ├── inference_hybrid.py # Hybrid backend (direct/unix/tcp)
+│   ├── inference_v2.py     # Chat completions inference (v2.6.0)
+│   ├── inference_hybrid.py # Chat completions backend (v2.6.0)
 │   ├── checkpoint.py       # Self-modification safety
 │   ├── observability.py    # Self-state queries
 │   ├── recovery.py         # Error recovery strategies
@@ -1072,22 +1072,20 @@ status = state.get_full_status()
 | **RAM Usage (idle)** | ~200MB |
 | **RAM Usage (7B)** | ~4.4GB |
 | **RAM Usage (1.5B)** | ~1.2GB |
-| **Context Window** | 4096 tokens |
+| **Context Window** | 8192 tokens |
 | **Threads** | 4 (reducible to 2) |
 | **Speed (7B)** | ~7-8 t/s |
 | **Speed (1.5B)** | ~20-25 t/s |
 | **Hot-swap Delay** | 2-3 seconds (LRU cached) |
 
-### Backend Latency (v2.4.0)
+### Backend Latency (v2.6.0)
 
 | Backend | Overhead per Call | Availability |
 |---------|-------------------|--------------|
-| **Direct binding** | ~50-100ms | Attempted first; fails on Termux/Android |
-| **Unix socket HTTP** | ~200-300ms | Available if llama-server supports `--socket` |
-| **TCP HTTP** | ~400-600ms | Always available (fallback) |
+| **Chat completions** | ~400-600ms | Default — `/v1/chat/completions` with ChatML |
+| **HTTP fallback** | ~400-600ms | Legacy `core/inference.py` on port 8081 |
 
-**Note:** Actual latency depends on prompt length, model size, and device thermal state.
-Multi-turn agent loops benefit most from reduced overhead (e.g., 5 calls × 500ms = 2.5s saved with direct binding).
+**Note:** Actual latency depends on prompt length, model size, and device thermal state. The v2.6.0 simplified backend removed direct binding and Unix socket backends that never worked reliably on Termux.
 
 ---
 
@@ -1142,43 +1140,31 @@ ls -la ~/models/qwen2.5-1.5b/
 
 | Limitation | Impact | Workaround / Status |
 |------------|--------|---------------------|
-| **Direct binding on Termux** | llama-cpp-python fails with "Unsupported platform" on Android | Hybrid backend (v2.4.0) attempts direct binding, falls back to HTTP automatically |
-| **HTTP API overhead** | ~400-600ms per inference call (TCP), ~200-300ms (Unix socket) | Unix socket backend reduces latency by ~50%; direct binding (~50-100ms) attempted first |
+| **HTTP API overhead** | ~400-600ms per inference call via `/v1/chat/completions` | Simplified in v2.6.0 — single reliable backend instead of three unreliable ones |
 | **File watches require `watchdog`** | Background file monitoring disabled if not installed | Install with `pip install watchdog` (optional) |
 | **No NPU acceleration** | CPU-only inference (~3-5 t/s at 4 threads) | Thermal management prevents throttling |
 | **Single-device only** | State not synced across devices | Intentional design for local-only privacy |
 | **Peer CLIs with node-pty** | CLIs that bundle native node-pty module (e.g. GitHub Copilot standalone) crash on Android ARM64 — no prebuilt `pty.node` for this platform | Auto-detected and excluded at startup; Claude Code, Gemini CLI, and Qwen Code all work via `-p` non-interactive mode |
 
-### Technical Notes (v2.4.0)
+### Technical Notes (v2.6.0)
 
-**Hybrid Backend Architecture:**
-- **Priority 1:** Direct `llama_cpp.Llama` binding (~50-100ms overhead)
-  - Attempted first on every startup
-  - Falls back gracefully if import fails (Termux/Android: "Unsupported platform")
-- **Priority 2:** Unix domain socket HTTP (~200-300ms overhead)
-  - Uses `llama-server --socket` instead of TCP
-  - Reduces latency by ~50% vs TCP localhost
-- **Priority 3:** TCP localhost HTTP (~400-600ms overhead)
-  - Original reliable fallback
-  - Always available if llama-server binary exists
+**Chat Completions Backend:**
+- Uses `/v1/chat/completions` endpoint exclusively — llama-server applies the model's ChatML template automatically
+- Previous versions (v2.4.0) used `/completion` with manual prompt formatting, bypassing ChatML — this was the root cause of most instruction-following failures
+- Simplified from 3 backends (direct binding, Unix socket, TCP HTTP) to 1 reliable backend
+- Falls back to legacy HTTP backend (`core/inference.py`) if chat completions unavailable
 
-**Backend Selection:**
-- Automatic with graceful degradation
-- Logs backend used and latency metrics
-- Use `/status` command or `get_backend_info()` to check active backend
+**Context & Token Budget (v2.6.0):**
+- Context window doubled from 4096 → 8192 tokens
+- Max response tokens doubled from 1024 → 2048 (complete files no longer truncated)
+- Memory budgets recalculated: system 500, summary 400, files 1600, turns 1000, message 400, response 2048
+- Subtask orchestrator now injects file contents between steps (step 2 sees what step 1 wrote)
 
-**Why not direct binding on Termux?**
-- `llama-cpp-python` uses pybind11 which requires platform-specific wheels
-- Termux/Android lacks prebuilt wheels; compilation often fails due to:
-  - Missing CMake toolchain for Android NDK
-  - Incompatible libc vs glibc expectations
-  - Shared library loading issues (`ctypes.CDLL` fails on Android)
-- Hybrid approach ensures functionality while attempting optimization
-
-**Migration Notes (v2.3.x → v2.4.0):**
-- No breaking changes; HTTP backend remains default fallback
-- Existing `--finetune`, `--import-lora`, learning features unchanged
-- To check backend: `codey2 --backend-info` (new command in development)
+**Migration Notes (v2.5.x → v2.6.0):**
+- No breaking changes to CLI interface
+- `core/inference_hybrid.py` completely rewritten (764→160 lines)
+- System prompt trimmed from 50→22 lines; domain guidance moved to contextual injection
+- Result validation added to orchestrator (catches false success claims)
 
 ---
 
@@ -1186,6 +1172,7 @@ ls -la ~/models/qwen2.5-1.5b/
 
 | Version | Highlights |
 |---------|------------|
+| **v2.6.0** | **Inference Pipeline Rewrite** — Fixed ChatML prompt formatting (root cause of ~70% failures); `/v1/chat/completions` with proper message arrays; context window 4K→8K, max_tokens 1024→2048; subtask file context passing; result validation catches false success claims; system prompt trimmed 50→22 lines with contextual domain guidance injection; simplified inference stack from 3 backends to 1 |
 | **v2.5.5** | **Git Enhancements** — Branch management (`/git branches/branch/checkout/merge`); AI-generated commit messages with conventional commits detection; merge conflict detection, parsing, and agent-assisted resolution; `/git commit` interactive approve flow; `/git diff` and `/git conflicts` commands |
 | **v2.5.4** | **Peer delegation + QA classifier fixes** — "ask gemini/claude/qwen to X" now actually calls that peer CLI and applies the result; added "replace", "rename", "change", "ask", "call" etc to action keywords (fixes "could you replace" being classified as QA); `enrich_message` patch_file hints now include replace/rename/append |
 | **v2.5.3** | **Bug fixes** — Agent loop after simple writes fixed: added `\nUser:` / `\nHuman:` / `\nA:` stop sequences to MODEL_CONFIG + HALLUCINATION_MARKERS; fixed `extra_stop` tokens (e.g. `</tool>`) never reaching llama-server (now passed through `server.infer(stop=...)`); auto-lint only injects errors to agent context (warnings go to terminal only, preventing unused-import loop); CPU monitor fixed with 250ms self-contained mini-sample when delta is near-zero |

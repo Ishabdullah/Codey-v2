@@ -28,19 +28,20 @@ LLAMA_SERVER_BIN = os.environ.get("CODEY_LLAMA_SERVER") or shutil.which("llama-s
 LLAMA_LIB = os.environ.get("CODEY_LLAMA_LIB") or str(_HOME_LLAMA)
 
 MODEL_CONFIG = {
-    "n_ctx":          4096,
+    "n_ctx":          8192,
     "n_threads":      4,
     "n_gpu_layers":   0,
     "verbose":        False,
     "temperature":    0.2,
-    "max_tokens":     1024,
+    "max_tokens":     2048,
     "repeat_penalty": 1.1,
     "top_p":          0.95,
     "top_k":          40,
     "batch_size":     256,
     "kv_type":        "q8_0",
     # Stop the model before it can role-play the next user turn.
-    # "\nUser:" matches "User: Tool result:" and "User: <follow-up>" hallucinations.
+    # With /v1/chat/completions, llama-server handles ChatML stop tokens
+    # automatically. These extra stops catch hallucinated role-play.
     "stop": ["<|im_end|>", "<|im_start|>", "\nUser:", "\nHuman:", "\nA:"],
 }
 
@@ -67,5 +68,5 @@ THERMAL_CONFIG["original_threads"] = MODEL_CONFIG.get("n_threads", 4)
 CODE_DIR = Path(__file__).parent.parent.resolve()
 WORKSPACE_ROOT = Path(os.getcwd()).resolve()
 
-CODEY_VERSION = "2.5.5"
+CODEY_VERSION = "2.6.0"
 CODEY_NAME    = "Codey-v2"

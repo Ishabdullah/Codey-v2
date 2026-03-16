@@ -6,6 +6,8 @@ from pathlib import Path
 from core.taskqueue import TaskQueue, STATUS_PENDING, STATUS_RUNNING
 from utils.logger import info, warning
 
+from prompts.system_prompt import GUIDANCE_HTTP_SERVER, GUIDANCE_HTTP_TESTING, GUIDANCE_SQLITE
+
 PLAN_PROMPT = """Break the task into 2-3 numbered steps. Max 3 steps.
 Each step WRITES ONE FILE with its COMPLETE content. No verification or setup steps.
 
@@ -211,10 +213,45 @@ def plan_tasks(user_message, project_context=''):
     queue.save()
     return queue
 
+def _collect_project_files(max_chars=6000):
+    """Read small project files to inject as context between subtasks."""
+    parts = []
+    total = 0
+    for f in sorted(Path.cwd().iterdir()):
+        if f.is_file() and f.suffix in ('.py', '.js', '.ts', '.html', '.css', '.json'):
+            if f.name.startswith('.'):
+                continue
+            try:
+                content = f.read_text(encoding='utf-8', errors='replace')
+                if len(content) > 3000:
+                    content = content[:3000] + '\n...[truncated]'
+                if total + len(content) > max_chars:
+                    break
+                parts.append(f"=== {f.name} ===\n{content}")
+                total += len(content)
+            except Exception:
+                pass
+    return '\n\n'.join(parts)
+
+
+# Patterns that indicate a task result is actually a failure
+_FAILURE_SIGNALS = [
+    "[error]", "[incomplete]", "traceback", "syntaxerror",
+    "nameerror", "typeerror", "importerror", "failed",
+    "assert", "exception", "1 failed", "errors=",
+]
+
+
+def _is_result_failure(summary):
+    """Check if a task result contains failure signals despite claiming success."""
+    low = summary.lower()
+    return any(sig in low for sig in _FAILURE_SIGNALS)
+
+
 def run_queue(queue, yolo=False):
     """
     Execute all pending tasks in queue.
-    Each task runs an isolated agent with shared file memory.
+    Each task runs an agent with file context from prior steps.
     Results chain as context to the next task.
     """
     from core.agent import run_agent
@@ -227,7 +264,6 @@ def run_queue(queue, yolo=False):
     def handle_interrupt(sig, frame):
         nonlocal interrupted
         interrupted = True
-        # Mark current running task as pending so it restarts on resume
         for t in queue.tasks:
             if t.status == 'running':
                 t.status = 'pending'
@@ -239,9 +275,9 @@ def run_queue(queue, yolo=False):
     try:
         for task in queue.tasks:
             if task.status == 'done':
-                continue  # already completed, skip on resume
+                continue
             if task.status == 'failed':
-                continue  # skip previously failed tasks
+                continue
 
             queue.mark_running(task.id)
 
@@ -252,40 +288,65 @@ def run_queue(queue, yolo=False):
                     '\n'.join(f'- {r}' for r in prior_results[-3:]) +
                     '\n\n')
 
-            # Always inject the full original request so the agent knows the
-            # complete spec — step descriptions alone are often too short to
-            # carry all the necessary detail (e.g. exact endpoint names, DB schema).
+            # Inject file contents from prior steps so this subtask
+            # knows what was actually written (not just a summary).
+            file_context = ''
+            if prior_results:
+                files = _collect_project_files()
+                if files:
+                    file_context = f"Files created so far:\n\n{files}\n\n"
+
+            # Inject domain-specific guidance based on task content
+            guidance = ''
+            combined = (getattr(queue, 'original_request', '') + ' ' + task.description).lower()
+            if any(k in combined for k in ['http', 'rest', 'api', 'server', 'endpoint']):
+                guidance += '\n' + GUIDANCE_HTTP_SERVER + '\n'
+            if any(k in combined for k in ['test', 'unittest', 'pytest', 'assert']):
+                guidance += '\n' + GUIDANCE_HTTP_TESTING + '\n'
+            if any(k in combined for k in ['sqlite', 'database', '.db', 'accounts']):
+                guidance += '\n' + GUIDANCE_SQLITE + '\n'
+
+            # Always inject the full original request
             original = getattr(queue, 'original_request', '')
             if original and original.strip() not in task.description:
                 prompt = (
                     f"Overall goal: {original}\n\n"
-                    f"{context_prefix}Current step: {task.description}"
+                    f"{context_prefix}{file_context}"
+                    f"{guidance}"
+                    f"Current step: {task.description}"
                 )
             else:
-                prompt = context_prefix + task.description
+                prompt = context_prefix + file_context + guidance + task.description
 
-            history = []  # isolated context per subtask
+            history = []  # isolated message history per subtask
 
             try:
                 result, _ = run_agent(prompt, history, yolo=yolo, _in_subtask=True)
-                
-                # Strip common redundant prefixes from task result summary
+
+                # Strip common redundant prefixes
                 summary = result
-                for prefix in ["Done. Final Answer: ", "Final Answer: ", "Done. Final answer: ", "Final answer: "]:
+                for prefix in ["Done. Final Answer: ", "Final Answer: ",
+                               "Done. Final answer: ", "Final answer: "]:
                     if summary.startswith(prefix):
                         summary = summary[len(prefix):]
                         break
-                
-                # If the subtask hit max steps without completing, treat as failed
-                # so subsequent tasks know to redo it rather than build on broken state.
+
+                # Validate result — catch false success claims
                 if summary.startswith("[INCOMPLETE]"):
                     queue.mark_failed(task.id, summary)
                     prior_results.append(
-                        f'Task {task.id}: {task.description[:60]} -> INCOMPLETE (hit step limit — needs retry)'
+                        f'Task {task.id}: {task.description[:60]} -> INCOMPLETE'
+                    )
+                elif _is_result_failure(summary):
+                    queue.mark_failed(task.id, summary)
+                    prior_results.append(
+                        f'Task {task.id}: {task.description[:60]} -> FAILED: {summary[:80]}'
                     )
                 else:
                     queue.mark_done(task.id, summary)
-                    prior_results.append(f'Task {task.id}: {task.description[:60]} -> {summary[:80]}')
+                    prior_results.append(
+                        f'Task {task.id}: {task.description[:60]} -> {summary[:80]}'
+                    )
             except KeyboardInterrupt:
                 raise
             except Exception as e:

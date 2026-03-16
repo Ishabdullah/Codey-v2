@@ -1,15 +1,12 @@
 #!/usr/bin/env python3
-"""Inference engine for Codey-v2 with dual-model support (Termux compatible).
+"""
+Inference engine for Codey-v2 (v2.6.0 — ChatML fix).
 
-Hybrid backend (v2.4.0):
-- Attempts direct llama-cpp-python binding first (~50-100ms overhead)
-- Falls back to Unix domain socket HTTP (~200-300ms overhead)
-- Final fallback to TCP localhost HTTP (~500ms overhead)
+Uses llama-server's /v1/chat/completions endpoint which automatically applies
+the model's chat template. Previous versions sent raw text to /completion,
+bypassing ChatML — the root cause of most instruction-following failures.
 
-Backend selection is automatic with graceful degradation.
-Logs backend used and latency metrics for observability.
-
-Original HTTP API backend still available for compatibility.
+Falls back to legacy HTTP backend (core/inference.py) if hybrid is unavailable.
 """
 
 import time
@@ -26,284 +23,168 @@ console = Console()
 
 last_tps = 0.0
 
-# Hybrid backend (v2.4.0) - lazy import to avoid breaking existing installs
-_hybrid_backend = None
+# Chat completions backend (v2.6.0)
+_chat_backend = None
 
-def _get_hybrid_backend():
-    """Get hybrid backend instance (lazy initialization)."""
-    global _hybrid_backend
-    if _hybrid_backend is None:
+
+def _get_chat_backend():
+    """Get chat completions backend (lazy initialization)."""
+    global _chat_backend
+    if _chat_backend is None:
         try:
-            from core.inference_hybrid import get_hybrid_backend as _get_backend
-            _hybrid_backend = _get_backend(prefer_unix_socket=True)
-            info(f"Hybrid backend initialized: {_hybrid_backend.active_backend_name}")
+            from core.inference_hybrid import get_hybrid_backend
+            _chat_backend = get_hybrid_backend()
+            info(f"Backend: {_chat_backend.backend_name}")
         except Exception as e:
-            warning(f"Hybrid backend init failed: {e}, using HTTP fallback")
-            _hybrid_backend = "http_fallback"
-    return _hybrid_backend
+            warning(f"Chat backend init failed: {e}, using HTTP fallback")
+            _chat_backend = "http_fallback"
+    return _chat_backend
 
 
-def infer(messages: list[dict], stream: bool = False, extra_stop: list = None, 
-        model: str = None, show_thinking: bool = False, 
-        use_hybrid: bool = True) -> str:
+def infer(messages: list[dict], stream: bool = False, extra_stop: list = None,
+          model: str = None, show_thinking: bool = False,
+          use_hybrid: bool = True) -> str:
     """
-    Run inference with optional model selection and thinking display.
-    
+    Run inference using /v1/chat/completions (ChatML).
+
     Args:
-        messages: Chat messages list
-        stream: Enable streaming (not yet implemented)
+        messages: Chat messages [{"role": "system"/"user"/"assistant", "content": "..."}]
+        stream: Enable streaming (reserved for future use)
         extra_stop: Additional stop sequences
         model: Force specific model ("primary" or "secondary")
         show_thinking: Show thinking indicator
-        use_hybrid: Use hybrid backend if available (default True)
-        
+        use_hybrid: Use chat completions backend (default True)
+
     Returns:
         Generated text or error message
     """
     global last_tps
 
-    # Try hybrid backend first (v2.4.0)
+    # Ensure model is loaded via loader
+    loader = get_loader()
+    if model is None:
+        user_input = ""
+        for msg in messages:
+            if msg.get("role") == "user":
+                user_input = msg.get("content", "")
+                break
+        model = get_router().route_task(user_input)
+        info(f"Auto-routed to {model} model")
+
+    start = time.time()
+    if not loader.ensure_model(model):
+        return f"[ERROR] Failed to load {model} model"
+
+    load_time = time.time() - start
+    if load_time > 1:
+        info(f"Model swap took {load_time:.1f}s")
+
+    # Try chat completions backend (v2.6.0)
     if use_hybrid:
-        backend = _get_hybrid_backend()
+        backend = _get_chat_backend()
         if backend and backend != "http_fallback":
             try:
-                return _infer_hybrid(backend, messages, extra_stop, model, show_thinking)
+                return _infer_chat(backend, messages, extra_stop, show_thinking)
             except Exception as e:
-                warning(f"Hybrid inference failed: {e}, falling back to HTTP")
-                # Fall through to HTTP backend
-    
-    # HTTP backend (original, reliable fallback)
+                warning(f"Chat completions failed: {e}, falling back to HTTP")
+
+    # Legacy HTTP fallback
     return _infer_http(messages, stream, extra_stop, model, show_thinking)
 
 
-def _infer_hybrid(backend, messages: list[dict], extra_stop: list, 
-                  model: str, show_thinking: bool) -> str:
-    """Run inference using hybrid backend."""
+def _infer_chat(backend, messages: list[dict], extra_stop: list,
+                show_thinking: bool) -> str:
+    """Run inference via /v1/chat/completions — proper ChatML."""
     global last_tps
-    
-    loader = get_loader()
-    
-    # Auto-route if model not specified
-    if model is None:
-        user_input = ""
-        for msg in messages:
-            if msg.get("role") == "user":
-                user_input = msg.get("content", "")
-                break
-        model = get_router().route_task(user_input)
-        info(f"Auto-routed to {model} model")
-    
-    # Ensure model is loaded via loader (manages hot-swap)
-    start = time.time()
-    if not loader.ensure_model(model):
-        return f"[ERROR] Failed to load {model} model"
-    
-    load_time = time.time() - start
-    if load_time > 1:
-        info(f"Model swap took {load_time:.1f}s")
-    
+
     # Build stop tokens
     stop = list(MODEL_CONFIG.get("stop", []))
     if extra_stop:
-        stop.extend(extra_stop)
-    
-    # Extract system message
-    system = ""
-    user_messages = []
-    for msg in messages:
-        if msg.get("role") == "system":
-            system = msg.get("content", "")
-        else:
-            user_messages.append(msg)
-    
-    # Format prompt
-    prompt = ""
-    if system:
-        prompt += f"System: {system}\n\n"
-    for msg in user_messages:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        prompt += f"{role.capitalize()}: {content}\n\n"
-    prompt += "Assistant:"
-    
-    # Show thinking indicator
+        stop.extend(s for s in extra_stop if s not in stop)
+
     if show_thinking:
-        console.print("[dim]⠋ Thinking...[/dim]")
-    
-    # Run inference
+        console.print("[dim]\u2901 Thinking...[/dim]")
+
     start = time.time()
-    output = backend.infer(prompt, max_tokens=MODEL_CONFIG.get("max_tokens", 1024), stop=stop)
-    
-    if output is None:
-        return "[ERROR] Hybrid inference failed"
-    
+    result = backend.infer(messages, max_tokens=MODEL_CONFIG.get("max_tokens", 2048), stop=stop)
+
+    if result is None:
+        return "[ERROR] Chat completions inference failed"
+
+    # result is (text, tokens, tps) tuple
+    text, tokens, tps = result
     elapsed = time.time() - start
-    tokens = len(output.split())
-    last_tps = tokens / elapsed if elapsed > 0 else 0
-    
-    # Show stats
+    last_tps = tps
+
     if show_thinking:
-        console.print(f"[dim]✓ Done ({backend.active_backend_name}): {tokens} tokens in {elapsed:.1f}s ({last_tps:.1f} t/s)[/dim]")
-    
-    info(f"Hybrid inference ({backend.active_backend_name}): {tokens} tokens in {elapsed:.1f}s ({last_tps:.1f} t/s)")
-    
-    return output.strip()
+        bname = backend.backend_name
+        console.print(f"[dim]\u2713 Done ({bname}): {tokens} tokens in {elapsed:.1f}s ({tps:.1f} t/s)[/dim]")
+
+    info(f"Inference ({backend.backend_name}): {tokens} tokens in {elapsed:.1f}s ({tps:.1f} t/s)")
+
+    return text
 
 
-def _infer_http(messages: list[dict], stream: bool, extra_stop: list, 
+def _infer_http(messages: list[dict], stream: bool, extra_stop: list,
                 model: str, show_thinking: bool) -> str:
-    """Run inference using original HTTP backend."""
+    """Run inference using legacy HTTP backend (inference.py on port 8081)."""
     global last_tps
 
-    loader = get_loader()
+    # The legacy backend uses /v1/chat/completions with proper messages
+    # so it also applies ChatML correctly.
+    from core.inference import infer as legacy_infer
 
-    # Auto-route if model not specified
-    if model is None:
-        user_input = ""
-        for msg in messages:
-            if msg.get("role") == "user":
-                user_input = msg.get("content", "")
-                break
-        model = get_router().route_task(user_input)
-        info(f"Auto-routed to {model} model")
-
-    # Ensure model is loaded
-    start = time.time()
-    if not loader.ensure_model(model):
-        return f"[ERROR] Failed to load {model} model"
-
-    load_time = time.time() - start
-    if load_time > 1:
-        info(f"Model swap took {load_time:.1f}s")
-
-    # Get llama-server instance
-    server = loader.get_model_instance()
-    if not server:
-        return "[ERROR] No model loaded"
-
-    # Build stop tokens
-    stop = list(MODEL_CONFIG.get("stop", []))
-    if extra_stop:
-        stop.extend(extra_stop)
-
-    # Extract system message if present
-    system = ""
-    user_messages = []
-    for msg in messages:
-        if msg.get("role") == "system":
-            system = msg.get("content", "")
-        else:
-            user_messages.append(msg)
-
-    # Format prompt for llama-server
-    prompt = ""
-    if system:
-        prompt += f"System: {system}\n\n"
-    for msg in user_messages:
-        role = msg.get("role", "user")
-        content = msg.get("content", "")
-        prompt += f"{role.capitalize()}: {content}\n\n"
-    prompt += "Assistant:"
-
-    # Show simple thinking indicator (no threads, safe for Termux)
     if show_thinking:
-        console.print("[dim]⠋ Thinking...[/dim]")
+        console.print("[dim]\u2901 Thinking (HTTP fallback)...[/dim]")
 
-    # Run inference
     start = time.time()
-    try:
-        output = server.infer(prompt, max_tokens=MODEL_CONFIG.get("max_tokens", 1024), stop=stop)
+    result = legacy_infer(messages, stream=stream, extra_stop=extra_stop)
+    elapsed = time.time() - start
 
-        if output is None:
-            return "[ERROR] Inference failed"
+    if show_thinking and result and not result.startswith("[ERROR]"):
+        tokens = len(result.split())
+        tps = round(tokens / elapsed, 1) if elapsed > 0 else 0
+        last_tps = tps
+        console.print(f"[dim]\u2713 Done (http): {tokens} tokens in {elapsed:.1f}s ({tps:.1f} t/s)[/dim]")
 
-        elapsed = time.time() - start
-        tokens = len(output.split())
-        last_tps = tokens / elapsed if elapsed > 0 else 0
-
-        # Clear thinking line and show stats
-        if show_thinking:
-            console.print(f"[dim]✓ Done: {tokens} tokens in {elapsed:.1f}s ({last_tps:.1f} t/s)[/dim]")
-
-        info(f"Inference (HTTP): {tokens} tokens in {elapsed:.1f}s ({last_tps:.1f} t/s)")
-
-        return output.strip()
-
-    except Exception as e:
-        error(f"Inference error: {e}")
-        return f"[ERROR] {e}"
+    return result
 
 
 def get_model_status() -> dict:
     """Get current model status."""
     loader = get_loader()
     router = get_router()
-    
+
     status = {
         "loaded": loader.get_loaded_model(),
         "router": router.get_status(),
         "loader": loader.get_status(),
     }
-    
-    # Add hybrid backend info if available
-    backend = _hybrid_backend
+
+    backend = _chat_backend
     if backend and backend != "http_fallback":
         try:
-            status["hybrid_backend"] = backend.get_stats()
-        except:
+            status["backend"] = backend.get_stats()
+        except Exception:
             pass
-    
+
     return status
 
 
 def get_backend_info() -> Dict[str, Any]:
-    """
-    Get information about the active inference backend.
-    
-    Returns:
-        Dict with backend type, latency, and capabilities
-    """
-    backend = _get_hybrid_backend()
-    
+    """Get information about the active inference backend."""
+    backend = _get_chat_backend()
+
     if backend == "http_fallback" or backend is None:
         return {
             "type": "http",
-            "method": "llama-server subprocess + HTTP API",
-            "overhead_ms": "~500ms per call",
-            "note": "Hybrid backend unavailable, using HTTP fallback"
-        }
-    
-    try:
-        stats = backend.get_stats()
-        return {
-            "type": stats["active_backend"],
-            "method": _get_backend_method(stats["active_backend"]),
-            "overhead_ms": _get_backend_overhead(stats["active_backend"]),
-            "backends_available": list(stats["backends"].keys()),
-        }
-    except Exception as e:
-        return {
-            "type": "unknown",
-            "error": str(e),
-            "fallback": "http"
+            "method": "llama-server + /v1/chat/completions (legacy port 8081)",
+            "note": "Chat backend unavailable, using HTTP fallback"
         }
 
-
-def _get_backend_method(backend_type: str) -> str:
-    """Get human-readable backend method description."""
-    methods = {
-        "direct": "llama-cpp-python direct binding",
-        "unix_socket": "llama-server + Unix domain socket HTTP",
-        "tcp_http": "llama-server + TCP localhost HTTP",
+    return {
+        "type": backend.backend_name,
+        "method": "llama-server + /v1/chat/completions (ChatML)",
+        "port": backend._port,
+        "calls_made": backend._calls_made,
     }
-    return methods.get(backend_type, "unknown")
-
-
-def _get_backend_overhead(backend_type: str) -> str:
-    """Get typical overhead for backend type."""
-    overheads = {
-        "direct": "~50-100ms per call",
-        "unix_socket": "~200-300ms per call",
-        "tcp_http": "~400-600ms per call",
-    }
-    return overheads.get(backend_type, "unknown")

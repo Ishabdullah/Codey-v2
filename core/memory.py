@@ -1,14 +1,15 @@
 """
 MemoryManager — infinite context via tiered memory.
 
-Budget allocation (4096 ctx):
-  System prompt:    ~600  (fixed)
+Budget allocation (8192 ctx, v2.6.0):
+  System prompt:    ~500  (fixed — trimmed in v2.6.0)
   CODEY.md:         ~200  (fixed)
-  Rolling summary:  ~300  (anchor)
-  Relevant files:   ~800  (dynamic, LRU + scored)
-  Recent turns:     ~600  (last 3 pairs)
-  Current message:  ~300  (current)
-  Response budget:  ~1296 (model output)
+  Rolling summary:  ~400  (anchor)
+  Relevant files:   ~1600 (dynamic, LRU + scored)
+  Recent turns:     ~1000 (last 3 pairs)
+  Current message:  ~400  (current)
+  Response budget:  ~2048 (model output — aligned with max_tokens)
+  Headroom:         ~2044 (safety margin)
 """
 import os
 import re
@@ -19,15 +20,14 @@ from utils.config import MODEL_CONFIG
 
 # Token budget constants
 CTX_TOTAL       = MODEL_CONFIG['n_ctx']
-BUDGET_SYSTEM   = 700   # system prompt + CODEY.md
-BUDGET_SUMMARY  = 300   # rolling work summary
-BUDGET_FILES    = 800   # relevant file context (base)
-BUDGET_TURNS    = 600   # recent conversation turns
-BUDGET_MESSAGE  = 300   # current user message
-BUDGET_RESPONSE = CTX_TOTAL - BUDGET_SYSTEM - BUDGET_SUMMARY - BUDGET_FILES - BUDGET_TURNS - BUDGET_MESSAGE
+BUDGET_SYSTEM   = 500   # system prompt + CODEY.md (trimmed in v2.6.0)
+BUDGET_SUMMARY  = 400   # rolling work summary
+BUDGET_FILES    = 1600  # relevant file context (doubled for 8K)
+BUDGET_TURNS    = 1000  # recent conversation turns
+BUDGET_MESSAGE  = 400   # current user message
+BUDGET_RESPONSE = MODEL_CONFIG['max_tokens']  # aligned with max_tokens (2048)
 
 # Maximum file context budget for models with larger context windows (8k-32k)
-# This prevents file context from blowing the context window on large projects
 MAX_FILE_CONTEXT_TOKENS = 4000
 
 LRU_EVICT_AFTER = 3  # evict file after N turns without reference
