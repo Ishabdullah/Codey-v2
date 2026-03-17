@@ -68,6 +68,28 @@ THERMAL_CONFIG["original_threads"] = MODEL_CONFIG.get("n_threads", 4)
 CODE_DIR = Path(__file__).parent.parent.resolve()
 WORKSPACE_ROOT = Path(os.getcwd()).resolve()
 
+# Recursive Inference — Phase 2 (v2.6.2)
+# Controls the draft → critique → refine self-improvement loop.
+# Set enabled=False to revert to single-pass inference.
+RECURSIVE_CONFIG = {
+    "enabled":            True,
+    # Max critique+refine cycles per request (1 = 1 critique + 1 refine = 3 calls total)
+    # Raise for higher quality at the cost of 2x–3x inference time.
+    "max_depth":          1,
+    # Quality gate: skip refinement if the model rates its own output >= this × 10
+    "quality_threshold":  0.7,
+    # Apply recursion for file-write tasks (write_file / patch_file)
+    "recursive_for_writes": True,
+    # Apply recursion during task planning (orchestrator)
+    "recursive_for_plans":  True,
+    # Skip recursion for Q&A / conversational messages (always skipped via breadth=minimal)
+    "recursive_for_qa":     False,
+    # Max tokens allocated to the critique response (keeps critique calls fast)
+    "critique_budget":    512,
+    # Max chars of KB context injected into the refine prompt for NEED_DOCS gaps
+    "retrieval_budget":   1200,
+}
+
 # Knowledge Base + Retrieval — Phase 1 (v2.6.1)
 RETRIEVAL_CONFIG = {
     "enabled":            True,
@@ -80,5 +102,5 @@ RETRIEVAL_CONFIG = {
     "semantic_threshold": 0.3,          # minimum cosine similarity for semantic results
 }
 
-CODEY_VERSION = "2.6.1"
+CODEY_VERSION = "2.6.2"
 CODEY_NAME    = "Codey-v2"

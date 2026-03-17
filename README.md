@@ -13,12 +13,20 @@ Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-ba
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v2.6.1 · Learning AI Agent · Termux
+  v2.6.2 · Learning AI Agent · Termux
 ```
 
 ---
 
 ## Key Features
+
+### 🔄 Recursive Self-Refinement (v2.6.2)
+- **Draft → Critique → Refine**: On every non-trivial coding task, the model reviews its own output before returning it — catching bugs, missing imports, and incomplete code before they reach your files
+- **Adaptive depth**: `classify_breadth_need()` auto-detects task complexity: simple Q&A = single pass; typical code edits = 1 critique+refine cycle; multi-file/complex tasks = 2 cycles
+- **Quality gate**: If the model rates its own output ≥ 7/10, refinement is skipped — no wasted inference on already-good responses
+- **NEED_DOCS retrieval**: When the model is unsure about an API, it emits `NEED_DOCS: <topic>` in the critique — triggering a targeted KB search before the refine pass
+- **Zero regression risk**: All recursive passes are wrapped in `try/except` — any failure transparently falls back to single-pass inference
+- **Configurable**: `RECURSIVE_CONFIG["enabled"] = False` reverts to v2.6.1 behavior instantly
 
 ### 📚 Knowledge Base + RAG Retrieval (v2.6.1)
 - **Local knowledge base**: `knowledge/` directory stores docs, APIs, patterns, and skill repos as searchable chunks

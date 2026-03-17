@@ -7,6 +7,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.2] - 2026-03-17
+
+### Added — Phase 2: Core Recursive Inference
+
+This phase introduces a self-refine loop so the model reviews and improves
+its own output before returning it. The model generates a draft, critiques it,
+then refines — stopping early when quality is acceptable.
+
+#### New Files
+- `core/recursive.py` — Recursive inference engine. `recursive_infer()` wraps
+  `infer()` with a draft → critique → refine loop. Key functions:
+  - `recursive_infer()` — main entry point, returns final response string
+  - `classify_breadth_need()` — classifies task as "minimal" / "standard" / "deep"
+    to determine recursion depth (0 / 1 / 2 critique+refine cycles)
+  - `passes_quality_check()` — quality gate: extracts X/10 rating or checks for
+    critical issue markers; returns True if draft is acceptable
+  - `extract_rating()` — regex-based X/10 parser
+  - `extract_doc_needs()` — extracts NEED_DOCS markers for targeted KB retrieval
+- `prompts/critique_prompts.py` — Self-critique prompt templates:
+  - `CRITIQUE_CODE` — for write_file, patch_file, code generation tasks
+  - `CRITIQUE_TOOL` — for tool call validation
+  - `CRITIQUE_PLAN` — for orchestration plan review
+  - `select_critique_prompt(task_type)` — selects appropriate template
+
+#### Inference Flow (Phase 2)
+```
+Step 1 of ReAct loop (non-QA tasks):
+  classify_breadth_need(user_message)
+    "minimal" → infer() (single pass, no change)
+    "standard" → recursive_infer(..., max_depth=1)
+                   Draft → Critique → (if quality gate passes: done)
+                                    → Refine → done
+    "deep"    → recursive_infer(..., max_depth=2)
+                   Draft → Critique → Refine → Critique → done
+
+Steps 2+ of ReAct loop (tool reactions):
+  infer() — single pass (no recursion, already reacting to concrete feedback)
+```
+
+#### Quality Gate
+- Looks for `X/10` rating in critique text
+- If rating ≥ 7/10 (threshold × 10): skip refinement — accept draft
+- If no numeric rating: check for critical markers (`"syntax error"`,
+  `"missing import"`, `"will crash"`, etc.) — any match triggers refinement
+- The model can emit `NEED_DOCS: <topic>` to trigger targeted KB retrieval
+  before the refine pass (injects up to 1200 chars of relevant docs)
+
+#### Performance characteristics
+- Best case (quality passes after draft): 2 infer calls (+1 critique, no refine)
+- Standard depth-1: up to 3 calls (draft + critique + refine)
+- Deep depth-2: up to 5 calls (draft + 2×(critique+refine))
+- All extra calls are wrapped in `try/except` — failure falls back to plain `infer()`
+- Disable entirely: `RECURSIVE_CONFIG["enabled"] = False` in `utils/config.py`
+
+### Changed
+- `utils/config.py` — Added `RECURSIVE_CONFIG` with tunable knobs:
+  `enabled`, `max_depth` (default 1), `quality_threshold` (0.7),
+  `recursive_for_writes`, `recursive_for_plans`, `recursive_for_qa`,
+  `critique_budget` (512 tokens), `retrieval_budget` (1200 chars).
+- `core/agent.py` — ReAct loop step 1 now calls `recursive_infer()` for
+  non-QA tasks with breadth ≠ "minimal". Steps 2+ use plain `infer()`.
+  Import of `RECURSIVE_CONFIG` added. Fully backward-compatible — disabled
+  path is identical to previous behavior.
+- Version bumped: `2.6.1` → `2.6.2`
+
+---
+
 ## [2.6.1] - 2026-03-17
 
 ### Added — Phase 1: Knowledge Base + RAG Retrieval

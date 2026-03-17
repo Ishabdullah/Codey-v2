@@ -13,7 +13,7 @@ from tools.file_tools import tool_read_file, tool_write_file, tool_append_file, 
 from tools.patch_tools import tool_patch_file
 from tools.shell_tools import shell, search_files
 from utils.logger import tool_call, tool_result, warning, separator, info, success
-from utils.config import AGENT_CONFIG
+from utils.config import AGENT_CONFIG, RECURSIVE_CONFIG
 from core.display import show_file_write, show_patch, show_shell, show_tool_generic, show_response
 
 # Learning manager for adaptive behavior
@@ -806,7 +806,38 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             warning("Context: " + usage_bar(used, total))
         else:
             info("Context: " + usage_bar(used, total))
-        response = infer(messages, stream=True, extra_stop=["</tool>"], show_thinking=True)
+        # ── Phase 2: Recursive inference on first step for non-QA tasks ─────────
+        # Subsequent steps (reacting to tool results) use regular infer — recursion
+        # is only valuable when generating the initial response/tool call.
+        # Wrapped in try/except — recursive failure must never break the agent loop.
+        _use_recursive = (
+            step == 1
+            and not is_qa
+            and RECURSIVE_CONFIG.get("enabled", True)
+        )
+        if _use_recursive:
+            try:
+                from core.recursive import recursive_infer, classify_breadth_need
+                _breadth = classify_breadth_need(user_message)
+                if _breadth == "minimal":
+                    response = infer(messages, stream=True,
+                                     extra_stop=["</tool>"], show_thinking=True)
+                else:
+                    _depth = 2 if _breadth == "deep" else 1
+                    response = recursive_infer(
+                        messages,
+                        task_type="code",
+                        user_message=user_message,
+                        max_depth=_depth,
+                        extra_stop=["</tool>"],
+                        stream=True,
+                    )
+            except Exception:
+                # Recursive inference unavailable — fall back to plain infer
+                response = infer(messages, stream=True,
+                                 extra_stop=["</tool>"], show_thinking=True)
+        else:
+            response = infer(messages, stream=True, extra_stop=["</tool>"], show_thinking=True)
         response = clean_response(response)
         tool_dict = parse_tool_call(response)
         if tool_dict:
