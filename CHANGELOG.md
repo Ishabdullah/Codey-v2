@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.4] - 2026-03-17
+
+### Added — Phase 4: Recursive Planning + Orchestration
+
+Phase 4 completes the recursive loop for multi-step tasks.  Plans now
+self-critique with KB retrieval, and each subtask in the execution queue
+receives targeted knowledge-base context specific to what that step needs.
+
+#### Changes to `core/orchestrator.py`
+
+**`plan_tasks()` — self-critiquing plans with retrieval:**
+- Retrieves relevant KB docs (`budget_chars=1200`) before building the planning
+  prompt so the model plans with known patterns and API references
+- Calls `recursive_infer(task_type="plan", max_depth=2, stream=False)` so the
+  plan goes through one self-critique + refine cycle using `CRITIQUE_PLAN`
+  (checks step count, ordering, redundancy, completeness)
+- Falls back to plain `infer()` transparently if recursion is unavailable
+- Controlled by `RECURSIVE_CONFIG["recursive_for_plans"]` (default `True`)
+
+**`run_queue()` — per-subtask RAG retrieval:**
+- For each pending subtask, calls `classify_breadth_need(task.description)` to
+  determine complexity
+- For `standard` or `deep` subtasks: retrieves targeted KB context
+  (`budget_chars=1200`) and appends it to the subtask prompt before calling
+  `run_agent()`.  Each subtask gets context relevant to its specific focus
+  (e.g. step 1 gets Flask API docs; step 2 gets unittest patterns)
+- `minimal` subtasks skip retrieval — no overhead for trivial steps
+- Fully try/except guarded — retrieval failure is silent and non-blocking
+
+#### Before vs. after
+
+| Aspect | Before Phase 4 | After Phase 4 |
+|--------|---------------|---------------|
+| Plan quality | Single-pass `infer()` | Draft→Critique→Refine + RAG |
+| Plan context | Git-repo flag only | + Relevant KB docs |
+| Subtask context | File context + domain guidance | + Targeted per-subtask KB retrieval |
+| Failure mode | Silent — uses whatever plan model produces | Same (all wrapped in try/except) |
+
+### Changed
+- `utils/config.py` — Version bumped: `2.6.3` → `2.6.4`
+
+---
+
 ## [2.6.3] - 2026-03-17
 
 ### Added — Phase 3: Layered System Prompts

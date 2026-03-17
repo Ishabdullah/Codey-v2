@@ -13,12 +13,19 @@ Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-ba
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v2.6.3 · Learning AI Agent · Termux
+  v2.6.4 · Learning AI Agent · Termux
 ```
 
 ---
 
 ## Key Features
+
+### 🗂️ Recursive Planning (v2.6.4)
+- **Self-critiquing plans**: The orchestrator now uses `recursive_infer(task_type="plan")` — every multi-step plan goes through a draft→critique→refine cycle using the `CRITIQUE_PLAN` template (checks step ordering, redundancy, completeness)
+- **Plan-time RAG**: Relevant KB docs are retrieved and injected into the planning prompt so the model plans with knowledge of available APIs and patterns
+- **Per-subtask retrieval**: Each subtask in the execution queue gets targeted KB context (`classify_breadth_need` → retrieve for `standard`/`deep` subtasks only)
+- **Zero regression**: All new logic is wrapped in `try/except` — falls back to current behaviour on any failure
+- **Controlled by config**: `RECURSIVE_CONFIG["recursive_for_plans"] = False` reverts to plain planning instantly
 
 ### 🧩 Layered Context System (v2.6.3)
 - **Phase-aware prompts**: Each stage of inference gets the context it actually needs — no wasted tokens

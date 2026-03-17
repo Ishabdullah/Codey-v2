@@ -168,12 +168,18 @@ def _postprocess_plan(tasks):
     return merged[:5]
 
 def plan_tasks(user_message, project_context=''):
-    """Ask model to plan the task. Returns TaskQueue."""
-    from core.inference_v2 import infer
+    """
+    Ask model to plan the task. Returns TaskQueue.
+
+    Phase 4 (v2.6.4): Planning now uses recursive_infer() so the plan goes
+    through one self-critique + refine cycle, and KB docs are retrieved and
+    injected so the model plans with relevant API/pattern context.
+    Falls back to plain infer() if anything goes wrong.
+    """
     plan_prompt = PLAN_PROMPT
     if project_context:
         plan_prompt += f'\nProject context:\n{project_context}'
-    # Inject git-repo awareness so model never adds "git init / create .gitignore" steps
+    # Inject git-repo awareness so model never adds "git init / .gitignore" steps
     try:
         from core.githelper import is_git_repo
         if is_git_repo():
@@ -183,11 +189,58 @@ def plan_tasks(user_message, project_context=''):
             )
     except Exception:
         pass
-    # Inject prompt directly into user message — more reliable than system role
+
+    # ── Phase 4: Retrieve KB docs relevant to the planning request ────────────
+    # Injected before the task description so the model plans with known patterns.
+    retrieved_block = ""
+    try:
+        from core.retrieval import retrieve
+        from utils.config import RETRIEVAL_CONFIG
+        if RETRIEVAL_CONFIG.get("enabled", True):
+            _retrieved = retrieve(user_message, budget_chars=1200)
+            if _retrieved:
+                retrieved_block = _retrieved + "\n\n"
+    except Exception:
+        pass  # KB unavailable — plan without retrieval
+
     messages = [
-        {'role': 'user', 'content': plan_prompt + '\n\nTask: ' + user_message + '\n\nNumbered steps:'}
+        {
+            'role': 'user',
+            'content': (
+                plan_prompt
+                + '\n\n'
+                + retrieved_block
+                + 'Task: ' + user_message
+                + '\n\nNumbered steps:'
+            ),
+        }
     ]
-    output = infer(messages, stream=False)
+
+    # ── Phase 4: Use recursive_infer for self-critiquing plan quality ─────────
+    # task_type="plan" selects CRITIQUE_PLAN so critique checks step count,
+    # order, redundancy, and completeness rather than code correctness.
+    # stream=False — planning is an internal call; no tokens shown to user.
+    # Falls back to plain infer() on any error.
+    output = ""
+    try:
+        from core.recursive import recursive_infer
+        from utils.config import RECURSIVE_CONFIG
+        if (RECURSIVE_CONFIG.get("enabled", True)
+                and RECURSIVE_CONFIG.get("recursive_for_plans", True)):
+            output = recursive_infer(
+                messages,
+                task_type="plan",
+                user_message=user_message,
+                max_depth=2,
+                stream=False,
+            )
+    except Exception:
+        pass  # fall through to plain infer below
+
+    if not output:
+        from core.inference_v2 import infer
+        output = infer(messages, stream=False)
+
     task_list = parse_task_list(output)
     if not task_list:
         # Fallback: treat whole message as one task
@@ -303,6 +356,25 @@ def run_queue(queue, yolo=False):
                 )
             else:
                 prompt = context_prefix + file_context + guidance + task.description
+
+            # ── Phase 4: Per-subtask RAG retrieval ───────────────────────────
+            # Each subtask gets targeted KB context specific to what it needs
+            # (e.g. step 1 gets Flask API docs, step 2 gets unittest patterns).
+            # Only for standard/deep breadth — minimal tasks get no extra context.
+            # Capped at 1200 chars to leave room for file context + tool hints.
+            try:
+                from core.recursive import classify_breadth_need
+                from core.retrieval import retrieve
+                from utils.config import RETRIEVAL_CONFIG, RECURSIVE_CONFIG
+                if (RETRIEVAL_CONFIG.get("enabled", True)
+                        and RECURSIVE_CONFIG.get("enabled", True)):
+                    _task_breadth = classify_breadth_need(task.description)
+                    if _task_breadth in ("standard", "deep"):
+                        _task_retrieved = retrieve(task.description, budget_chars=1200)
+                        if _task_retrieved:
+                            prompt += "\n\n" + _task_retrieved
+            except Exception:
+                pass  # Retrieval unavailable — continue without
 
             # Remind model to use tools (7B models often forget)
             _target_files = _FILE_RE.findall(task.description)
