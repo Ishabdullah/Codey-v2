@@ -7,6 +7,70 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.5] - 2026-03-17
+
+### Added — Phase 5: Skill Loading + External Repos
+
+Phase 5 adds dynamic skill injection into the system prompt. When Codey
+receives a task, it now searches the indexed skill repositories for expert
+prompt patterns that match the request and injects them as a `## Relevant
+Skills` context layer alongside the existing RAG documentation.
+
+#### New file: `core/skills.py`
+
+- `load_relevant_skills(user_message, budget_chars=800)` — queries the KB
+  with a skill-biased prefix (`"skill template pattern: <task>"`) to surface
+  skill definitions over generic documentation chunks; returns a
+  `## Relevant Skills` block or `""` if nothing relevant or no repos indexed
+- `list_available_skills()` — returns names of cloned skill repos under
+  `knowledge/skills/`; used for status reporting
+- Guards against `knowledge/skills/` being absent or empty — returns `""`
+  silently so the agent is never blocked if skill repos aren't set up
+- All paths wrapped in `try/except` — never raises
+
+#### Changes to `prompts/layered_prompt.py`
+
+**`_build_draft_prompt()` — skills layer added:**
+- After the RAG retrieval block, calls `load_relevant_skills(user_message)`
+- If a non-empty block is returned, adds it at `priority=3` (same bucket as
+  RAG and repo map — evicted before files if budget is tight)
+- Wrapped in `try/except` — skills failure is silent and non-blocking
+
+#### How it works end-to-end
+
+```
+User: "review core/agent.py for bugs"
+  → _build_draft_prompt()
+      → retrieve("review core/agent.py bugs")        → ## Reference Material (docs)
+      → load_relevant_skills("review core/agent.py…") → ## Relevant Skills (skill patterns)
+  → System prompt includes: docs + skill template for code review
+  → Model follows the expert skill format (ISSUES / SUGGESTIONS / VERDICT)
+```
+
+#### Skill repos (set up via `tools/setup_skills.sh`)
+
+| Repo | Purpose |
+|------|---------|
+| awesome-claude-skills | Curated skill definitions for common dev workflows |
+| superpowers | Advanced multi-tool orchestration patterns |
+| skil | Formal skill schema (Anthropic) |
+| notebooklm-skill | Document analysis + summarization patterns |
+| marketingskills | Content/docs generation patterns |
+
+#### Before vs. after
+
+| Aspect | Before Phase 5 | After Phase 5 |
+|--------|---------------|---------------|
+| Skill awareness | None — model improvises format | Expert skill patterns injected if available |
+| System prompt layers | identity, prefs, project, RAG, files | + skills layer at priority=3 |
+| With empty skills dir | N/A | Silent `""` return — no change to behaviour |
+| Budget impact | — | +0–800 chars (evicted first among p=3 if tight) |
+
+### Changed
+- `utils/config.py` — Version bumped: `2.6.4` → `2.6.5`
+
+---
+
 ## [2.6.4] - 2026-03-17
 
 ### Added — Phase 4: Recursive Planning + Orchestration

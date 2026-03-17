@@ -13,12 +13,18 @@ Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-ba
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v2.6.4 · Learning AI Agent · Termux
+  v2.6.5 · Learning AI Agent · Termux
 ```
 
 ---
 
 ## Key Features
+
+### 🔧 Skill Loading (v2.6.5)
+- **Dynamic skill injection**: `core/skills.py` searches indexed skill repos (awesome-claude-skills, superpowers, skil, etc.) for patterns matching the current task and injects a `## Relevant Skills` block into the system prompt
+- **Skill-biased retrieval**: Uses a dedicated query (`"skill template pattern: <task>"`) to surface skill definitions over generic documentation
+- **Zero-setup fallback**: Silently returns `""` if `knowledge/skills/` is empty or not yet set up — no regression, no errors
+- **Setup**: Run `bash tools/setup_skills.sh` once to clone and index skill repos
 
 ### 🗂️ Recursive Planning (v2.6.4)
 - **Self-critiquing plans**: The orchestrator now uses `recursive_infer(task_type="plan")` — every multi-step plan goes through a draft→critique→refine cycle using the `CRITIQUE_PLAN` template (checks step ordering, redundancy, completeness)

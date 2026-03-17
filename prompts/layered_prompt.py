@@ -205,6 +205,7 @@ def _build_draft_prompt(user_message: str) -> str:
       2 Project memory
       3 Repo map
       3 Retrieved KB docs (RAG)
+      3 Relevant skill patterns (Phase 5)
       4 Loaded files
     """
     from prompts.system_prompt import SYSTEM_PROMPT
@@ -224,6 +225,16 @@ def _build_draft_prompt(user_message: str) -> str:
                 p.add("retrieval", retrieved, priority=3)
         except Exception:
             pass  # KB unavailable — continue without
+
+    # Phase 5 skills: inject relevant skill patterns from external repos
+    if user_message:
+        try:
+            from core.skills import load_relevant_skills
+            skills = load_relevant_skills(user_message)
+            if skills:
+                p.add("skills", skills, priority=3)
+        except Exception:
+            pass  # Skills unavailable — continue without
 
     p.add("files", _get_file_block(user_message), priority=4)
     return p.build()
