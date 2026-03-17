@@ -167,9 +167,8 @@ def retrieve_for_error(error_text: str, tool_name: str, budget_chars: int = 1200
 def retrieval_status() -> dict:
     """Return status info about the retrieval system (for /status command)."""
     try:
-        from tools.kb_semantic import index_stats, HAS_SENTENCE_TRANSFORMERS
+        from tools.kb_semantic import index_stats
         stats = index_stats()
-        stats["sentence_transformers"] = HAS_SENTENCE_TRANSFORMERS
         stats["retrieval_enabled"] = RETRIEVAL_CONFIG.get("enabled", True)
         return stats
     except Exception as e:

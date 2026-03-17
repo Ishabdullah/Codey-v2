@@ -375,6 +375,16 @@ class Daemon:
         # claimed and executed twice.  All task dispatch goes through
         # _process_planner_tasks, which uses try_claim_task() for atomic claiming.
 
+        # Start dedicated embedding server (nomic-embed on port 8082)
+        try:
+            from core.embed_server import start_embed_server
+            if start_embed_server():
+                info("Embed server started (port 8082)")
+            else:
+                warning("Embed server unavailable — BM25-only KB search active")
+        except Exception as _e:
+            warning(f"Embed server startup skipped: {_e}")
+
         # Start file watch manager
         self.file_watch.start()
 
@@ -397,6 +407,13 @@ class Daemon:
         finally:
             # Stop file watch
             self.file_watch.stop()
+
+            # Stop embed server
+            try:
+                from core.embed_server import stop_embed_server
+                stop_embed_server()
+            except Exception:
+                pass
 
             # Cleanup
             await self.server.stop()

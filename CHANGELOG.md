@@ -7,6 +7,77 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.6] - 2026-03-17
+
+### Added — Phase 6: Dedicated Embedding Server (Option C)
+
+Phase 6 replaces the slow 7B-model embedding path with a purpose-built
+encoder model running as a permanent, separate process.  Building the full
+KB vector index now takes ~3 minutes instead of ~3 hours on-device.
+
+#### New file: `core/embed_server.py`
+
+- `EmbedServer` class — manages a dedicated `llama-server` subprocess for
+  embeddings only.  Runs `nomic-embed-text-v1.5.Q4_K_M.gguf` (~80 MB) on
+  **port 8082** with `--embedding --pooling mean`, `-c 2048`, `-t 2`.
+  Distinct from the 7B generation server on port 8080 — never evicted by
+  model hot-swapping, never occupies the generation slot.
+- `start_embed_server()` / `stop_embed_server()` — public helpers; both
+  idempotent and safe to call multiple times.
+- Startup: waits up to 30 s for `/health` to respond; logs to
+  `~/.codey-v2/embed-server.log` on failure.
+- Graceful stop on daemon shutdown; `pkill -f llama-server` from `codeyd2
+  stop` also catches the embed server process.
+
+#### Changes to `utils/config.py`
+
+- `EMBED_MODEL_PATH` — path to nomic GGUF (env: `CODEY_EMBED_MODEL`,
+  default: `~/models/nomic-embed/nomic-embed-text-v1.5.Q4_K_M.gguf`)
+- `EMBED_SERVER_PORT = 8082` — overridable via `CODEY_EMBED_PORT`
+
+#### Changes to `tools/kb_semantic.py`
+
+- `_LLAMA_PORT` default changed from `8080` → `8082` (the embed server
+  port).  Priority: `CODEY_EMBED_PORT` > `CODEY_LLAMA_PORT` > `8082`.
+- Both `build_semantic_index()` and `semantic_search()` now automatically
+  connect to the dedicated embed server — no code change required.
+
+#### Changes to `core/daemon.py`
+
+- `_main_loop()` starts the embed server before the main `while` loop.
+  Logs `"Embed server ready on port 8082"` on success or
+  `"Embed server unavailable — BM25-only KB search active"` on failure
+  (missing model file, binary not found, etc.) — never blocks daemon startup.
+- `finally` block stops the embed server on clean shutdown.
+
+#### Why nomic-embed-text?
+
+| Property | 7B generation model | nomic-embed-text |
+|----------|---------------------|-----------------|
+| Size | ~4 GB | ~80 MB |
+| Embedding speed | ~3 s/chunk | ~50 ms/chunk |
+| 3777-chunk index build | ~3 hours | ~3 minutes |
+| Vector dimension | 3584-d | 768-d |
+| Purpose | Generation | Encoding only |
+
+The 768-d vectors are stored in `knowledge/embeddings/vectors.npy` alongside
+`vectors.meta.json` (records backend name + dimension so a mismatch is caught
+at query time rather than producing silent garbage results).
+
+#### One-time rebuild after upgrade
+
+```bash
+codeyd2 stop && codeyd2 start
+# embed server starts automatically on port 8082
+python3 -c "from tools.kb_semantic import build_semantic_index; build_semantic_index()"
+# ~3 min — writes vectors.npy at 768-dim (nomic)
+```
+
+### Changed
+- `utils/config.py` — Version bumped: `2.6.5` → `2.6.6`
+
+---
+
 ## [2.6.5] - 2026-03-17
 
 ### Added — Phase 5: Skill Loading + External Repos

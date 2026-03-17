@@ -14,6 +14,15 @@ SECONDARY_MODEL_PATH = Path(os.environ.get(
     Path.home() / "models" / "qwen2.5-1.5b" / "qwen2.5-1.5b-instruct-q8_0.gguf"
 ))
 
+# Dedicated embedding model (nomic-embed-text) — Option C (v2.6.6)
+# Purpose-built encoder: ~80 MB, ~50 ms/chunk, 768-dim vectors.
+# Runs on port 8082, separate from the 7B generation server on 8080.
+EMBED_MODEL_PATH = Path(os.environ.get(
+    "CODEY_EMBED_MODEL",
+    Path.home() / "models" / "nomic-embed" / "nomic-embed-text-v1.5.Q4_K_M.gguf"
+))
+EMBED_SERVER_PORT = int(os.environ.get("CODEY_EMBED_PORT", "8082"))
+
 # Router configuration - Phase 3
 ROUTER_CONFIG = {
     "simple_max_chars": 50,         # Under this length → consider simple
@@ -102,5 +111,5 @@ RETRIEVAL_CONFIG = {
     "semantic_threshold": 0.3,          # minimum cosine similarity for semantic results
 }
 
-CODEY_VERSION = "2.6.5"
+CODEY_VERSION = "2.6.6"
 CODEY_NAME    = "Codey-v2"
