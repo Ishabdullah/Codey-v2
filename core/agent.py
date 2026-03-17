@@ -459,6 +459,17 @@ def build_system_prompt(message=""):
     if repo_map:
         parts.append("\n" + repo_map)
 
+    # ── RAG: inject retrieved knowledge from local KB (Phase 1) ─────────────
+    # Wrapped in try/except — retrieval must never block the agent loop.
+    if message:
+        try:
+            from core.retrieval import retrieve
+            retrieved = retrieve(message)
+            if retrieved:
+                parts.append("\n" + retrieved)
+        except Exception:
+            pass  # KB unavailable or empty — continue without retrieval
+
     # Memory-aware: only inject files relevant to current message
     file_ctx = build_file_context_block(message)
     if file_ctx:

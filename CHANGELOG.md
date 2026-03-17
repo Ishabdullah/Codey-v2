@@ -7,6 +7,72 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.1] - 2026-03-17
+
+### Added — Phase 1: Knowledge Base + RAG Retrieval
+
+This phase implements the foundation of the Recursive LM Architecture:
+a local knowledge base with Retrieval-Augmented Generation (RAG) that
+injects relevant documentation into the model's context at inference time.
+
+#### New Files
+- `tools/kb_scraper.py` — Document chunk indexer. Splits files into
+  overlapping 512-word chunks with stable MD5 IDs. Writes
+  `.chunks.json` index files to `knowledge/embeddings/`.
+- `tools/kb_semantic.py` — Search module with two backends:
+  (1) semantic search via `sentence-transformers` (all-MiniLM-L6-v2,
+  384-dim cosine similarity); (2) keyword overlap fallback (always
+  available, no dependencies). `build_semantic_index()` pre-computes
+  embeddings as `vectors.npy` + `mapping.json`.
+- `core/retrieval.py` — RAG integration. `retrieve(user_message)`
+  searches the KB and returns a formatted `## Reference Material` block
+  ready to inject into the system prompt. `retrieve_for_error()` is
+  specialised for error recovery. Budget: 2400 chars (~600 tokens).
+- `tools/setup_skills.sh` — One-shot setup script. Clones 4 skill
+  repositories into `knowledge/skills/`, indexes all of them, and
+  optionally builds the semantic index.
+
+#### Knowledge Base Directory Structure
+```
+knowledge/
+  docs/         # User-supplied docs (add .md/.txt files here)
+  apis/         # API reference files
+  patterns/     # Code pattern templates
+  skills/       # Cloned skill repos (created by setup_skills.sh)
+  embeddings/   # Auto-generated chunk index + vector store
+```
+
+#### Skill Repositories (cloned by setup_skills.sh)
+- `ComposioHQ/awesome-claude-skills` — curated skill prompts
+- `obra/superpowers` — multi-tool orchestration patterns
+- `anthropics/skil` — official skill definition framework
+- `PleasePrompto/notebooklm-skill` — document analysis patterns
+
+### Changed
+- `utils/config.py` — Added `RETRIEVAL_CONFIG` with tunable knobs:
+  `enabled`, `semantic_search`, `max_chunks`, `budget_chars`,
+  `semantic_threshold` (default 0.3), `embedding_model`.
+- `core/agent.py` — `build_system_prompt()` now calls `retrieve(message)`
+  and injects the result as `## Reference Material` after the repo map.
+  Wrapped in `try/except` — retrieval never blocks inference.
+- Version bumped: `2.6.0` → `2.6.1`
+
+### Context Budget (updated)
+```
+System prompt:       ~500 tokens
+User preferences:    ~100 tokens
+CODEY.md/project:    ~200 tokens
+Repository map:      ~300 tokens
+Reference material:  ~600 tokens  ← NEW (from knowledge base)
+Loaded files:       ~1600 tokens  (unchanged; headroom absorbed the new slot)
+Recent history:     ~1000 tokens
+Current message:     ~400 tokens
+Response budget:    ~2048 tokens
+Safety headroom:    ~1444 tokens
+```
+
+---
+
 ## [2.0.0] - 2026-03-08
 
 ### Added - Complete 7-Phase Implementation

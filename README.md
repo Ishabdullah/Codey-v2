@@ -13,12 +13,32 @@ Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-ba
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v2.6.0 · Learning AI Agent · Termux
+  v2.6.1 · Learning AI Agent · Termux
 ```
 
 ---
 
 ## Key Features
+
+### 📚 Knowledge Base + RAG Retrieval (v2.6.1)
+- **Local knowledge base**: `knowledge/` directory stores docs, APIs, patterns, and skill repos as searchable chunks
+- **Auto-retrieval**: Every inference call searches the KB and injects up to ~600 tokens of relevant context into the system prompt — the model sees the right docs for the task
+- **Dual search backends**: Semantic search via `sentence-transformers` all-MiniLM-L6-v2 (80 MB, 384-dim); pure keyword fallback always active with zero dependencies
+- **Skill repos**: `bash tools/setup_skills.sh` clones 4 curated skill repositories and indexes them automatically
+- **Bring your own docs**: Drop `.md`/`.txt` files into `knowledge/docs/` and index them in one command
+- **Effective model uplift**: RAG + 3-pass recursion (Phase 2) targets ~20B-equivalent quality from a 7B model
+- **Graceful degradation**: Empty KB = no retrieval overhead; the agent loop is never blocked
+
+```bash
+# First-time setup (run once) — no extra packages needed
+bash tools/setup_skills.sh
+
+# Add your own docs
+cp my_guide.md ~/codey-v2/knowledge/docs/
+python -c "from tools.kb_scraper import index_directory; index_directory('knowledge/docs', 'docs')"
+```
+
+> **Termux/Android**: BM25 keyword search is built-in (zero dependencies). Vector semantic search requires `fastembed` or `sentence-transformers`, neither of which have ARM64 Android wheels — skip them, BM25 is the active backend and works well.
 
 ### 🌿 Git Enhancements (v2.5.5)
 - **Branch management**: `/git branches` lists all branches; `/git branch <name>` creates and switches; `/git checkout <name>` switches with confirmation prompt

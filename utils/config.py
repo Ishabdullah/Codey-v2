@@ -68,5 +68,17 @@ THERMAL_CONFIG["original_threads"] = MODEL_CONFIG.get("n_threads", 4)
 CODE_DIR = Path(__file__).parent.parent.resolve()
 WORKSPACE_ROOT = Path(os.getcwd()).resolve()
 
-CODEY_VERSION = "2.6.0"
+# Knowledge Base + Retrieval — Phase 1 (v2.6.1)
+RETRIEVAL_CONFIG = {
+    "enabled":            True,
+    "kb_path":            str(CODEY_DIR / "knowledge"),
+    "semantic_search":    True,         # prefer embeddings when index exists
+    "max_chunks":         4,            # max results per retrieval query
+    "budget_chars":       2400,         # max chars of retrieved content (~600 tokens)
+    "embedding_model":    "all-MiniLM-L6-v2",
+    "min_score":          0.0,          # minimum raw score (keyword: overlap count)
+    "semantic_threshold": 0.3,          # minimum cosine similarity for semantic results
+}
+
+CODEY_VERSION = "2.6.1"
 CODEY_NAME    = "Codey-v2"
