@@ -420,61 +420,12 @@ def is_hallucination(response, user_message, tools_used):
     return false_file, false_run
 
 def build_system_prompt(message=""):
-    parts = [SYSTEM_PROMPT]
-    # Inject learned user preferences so they influence code generation
-    try:
-        prefs = _get_learning().get_all_preferences()
-        if prefs:
-            pref_lines = []
-            labels = {
-                "test_framework":    "Test framework",
-                "code_style":        "Code style",
-                "naming_convention": "Naming convention",
-                "import_style":      "Import style",
-                "docstring_style":   "Docstring style",
-                "error_handling":    "Error handling",
-                "type_hints":        "Type hints",
-                "async_style":       "Async style",
-                "http_library":      "HTTP library",
-                "cli_library":       "CLI library",
-                "log_style":         "Logging style",
-            }
-            for k, v in prefs.items():
-                if v:
-                    pref_lines.append(f"- {labels.get(k, k)}: {v}")
-            if pref_lines:
-                parts.append("\n## User Preferences\nAlways match these preferences when generating code:\n" + "\n".join(pref_lines))
-    except Exception:
-        pass
-    codeymd = read_codeymd()
-    if codeymd:
-        parts.append("\n## Project Memory\n" + codeymd)
-    else:
-        proj = get_project_summary()
-        if proj:
-            parts.append("\n## Current Project\n" + proj)
-            
-    from core.project import get_repo_map
-    repo_map = get_repo_map()
-    if repo_map:
-        parts.append("\n" + repo_map)
-
-    # ── RAG: inject retrieved knowledge from local KB (Phase 1) ─────────────
-    # Wrapped in try/except — retrieval must never block the agent loop.
-    if message:
-        try:
-            from core.retrieval import retrieve
-            retrieved = retrieve(message)
-            if retrieved:
-                parts.append("\n" + retrieved)
-        except Exception:
-            pass  # KB unavailable or empty — continue without retrieval
-
-    # Memory-aware: only inject files relevant to current message
-    file_ctx = build_file_context_block(message)
-    if file_ctx:
-        parts.append("\n## Loaded Files\n" + file_ctx)
-    return "\n".join(parts)
+    """
+    Alias for build_recursive_prompt(phase="draft") — kept for compatibility.
+    All new call sites should use build_recursive_prompt() directly.
+    """
+    from prompts.layered_prompt import build_recursive_prompt
+    return build_recursive_prompt(message, phase="draft")
 
 def enrich_message(user_message):
     loaded = list_loaded()
@@ -699,7 +650,8 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                     f"({', '.join(_by_name) or 'none installed'}). Continuing locally."
                 )
 
-    used, total = get_context_usage([{"role": "system", "content": build_system_prompt()}])
+    from prompts.layered_prompt import build_recursive_prompt
+    used, total = get_context_usage([{"role": "system", "content": build_recursive_prompt("")}])
     if used < total * 0.5:
         auto_load_from_prompt(user_message)
     enriched = enrich_message(user_message)
@@ -742,7 +694,8 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             history = history[-keep:]
     elif should_summarize(history):
         history = summarize_history(history)
-    sys_prompt = build_system_prompt(user_message)
+    # ── Phase 3: Layered system prompt (draft phase) ──────────────────────────
+    sys_prompt = build_recursive_prompt(user_message, phase="draft")
     messages = [{"role": "system", "content": sys_prompt}]
     
     # Pre-inference guide: if it's a question or conversation, tell it NOT to use tools

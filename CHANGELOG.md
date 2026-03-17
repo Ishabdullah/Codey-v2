@@ -7,6 +7,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.3] - 2026-03-17
+
+### Added — Phase 3: Layered System Prompts
+
+Phase 3 introduces a phase-aware system prompt architecture.  Each stage of the
+recursive inference loop now receives context optimised for what that stage needs,
+rather than a static system prompt that wastes tokens on irrelevant information.
+
+#### New Files
+- `prompts/layered_prompt.py` — Layered prompt builder with two exports:
+  - `LayeredPrompt` class — priority-managed context assembler with budget-based
+    eviction.  Layers sorted by importance (lower priority number = kept first).
+    Required layers are never evicted.  Final output maintains insertion order for
+    coherent reading.
+  - `build_recursive_prompt(user_message, phase, ...)` — Phase-aware system prompt
+    factory.  Drop-in replacement for `build_system_prompt()`.
+
+#### Phase-aware context composition
+```
+phase="draft"    → Full context (identical to old build_system_prompt — no regression)
+                   Priority stack:
+                     0 SYSTEM_PROMPT       (required)
+                     1 User preferences
+                     2 Project memory / CODEY.md
+                     3 Repo map
+                     3 Retrieved KB docs (RAG, Phase 1)
+                     4 Loaded files
+
+phase="critique" → Lean context — drops project, files, history
+                   Priority stack:
+                     0 Critique instructions  (required)
+                     1 Prior draft to review  (required, embedded in system prompt)
+                   Benefit: saves ~3000 tokens vs using full system prompt
+
+phase="refine"   → Full context minus history — adds critique summary
+                   Priority stack:
+                     0 SYSTEM_PROMPT       (required)
+                     1 User preferences
+                     2 Project memory / CODEY.md
+                     2 Issues to Fix (critique summary, required)
+                     3 Repo map
+                     3 Targeted retrieved docs (NEED_DOCS, if any)
+                     4 Loaded files
+                   Benefit: history dropped (~1000 tokens freed); critique
+                   acts as the "memory" of what to fix
+```
+
+#### Context savings per request (typical standard-depth run)
+| Pass       | Before Phase 3        | After Phase 3          |
+|------------|-----------------------|------------------------|
+| Draft      | full system (~3K tok) | full system (~3K tok)  |
+| Critique   | full system (~3K tok) | lean (~0.5K tok)       |
+| Refine     | full + history (~4K)  | full − history (~3K)   |
+| **Total**  | ~10K tokens           | ~6.5K tokens           |
+
+#### Improved refine quality
+The refine pass previously used `[*messages + draft + refine_instruction]` which
+included the full conversation history.  Phase 3 instead generates a fresh response
+to the original task with the critique embedded in the system prompt.  The model
+produces a cleaner result (no history noise, full context budget available).
+
+### Changed
+- `core/agent.py` — `build_system_prompt()` is now a thin wrapper around
+  `build_recursive_prompt(message, phase="draft")`.  The two call sites in
+  `run_agent()` now call `build_recursive_prompt()` directly.  Backward
+  compatible — external code calling `build_system_prompt()` still works.
+- `core/recursive.py` — Critique and refine message construction updated to use
+  `build_recursive_prompt(phase="critique")` and `build_recursive_prompt(phase="refine")`.
+  Removed direct `select_critique_prompt` import (now handled in layered_prompt.py).
+- Version bumped: `2.6.2` → `2.6.3`
+
+---
+
 ## [2.6.2] - 2026-03-17
 
 ### Added — Phase 2: Core Recursive Inference

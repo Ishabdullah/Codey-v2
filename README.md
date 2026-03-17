@@ -13,12 +13,20 @@ Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-ba
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v2.6.2 · Learning AI Agent · Termux
+  v2.6.3 · Learning AI Agent · Termux
 ```
 
 ---
 
 ## Key Features
+
+### 🧩 Layered Context System (v2.6.3)
+- **Phase-aware prompts**: Each stage of inference gets the context it actually needs — no wasted tokens
+- **Draft phase**: Full context (identity + prefs + project + RAG + files) — identical to before
+- **Critique phase**: Lean prompt (critique template + prior draft only) — saves ~2500 tokens per review pass
+- **Refine phase**: Full context minus history + critique summary embedded — frees ~1000 tokens for better output
+- **Priority-managed eviction**: `LayeredPrompt` class drops lower-priority context blocks first when budget is tight; critical blocks (identity, critique summary) are never evicted
+- **~35% token reduction** on typical standard-depth recursive calls vs. Phase 2
 
 ### 🔄 Recursive Self-Refinement (v2.6.2)
 - **Draft → Critique → Refine**: On every non-trivial coding task, the model reviews its own output before returning it — catching bugs, missing imports, and incomplete code before they reach your files

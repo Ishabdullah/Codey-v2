@@ -41,7 +41,7 @@ import re
 from typing import Optional
 
 from utils.config import RECURSIVE_CONFIG
-from prompts.critique_prompts import select_critique_prompt
+from prompts.layered_prompt import build_recursive_prompt
 from utils.logger import info, warning
 
 
@@ -217,8 +217,6 @@ def recursive_infer(
     if extra_stop is None:
         extra_stop = ["</tool>"]
 
-    critique_prompt = select_critique_prompt(task_type)
-
     # ── Step 1: Generate initial draft ────────────────────────────────────────
     try:
         from core.inference_v2 import infer
@@ -238,17 +236,21 @@ def recursive_infer(
     # ── Steps 2…N: Critique + optionally refine ───────────────────────────────
     for cycle in range(1, max_depth + 1):
 
-        # Build a lightweight critique context: just the draft, not the full history.
-        # This keeps the critique call well within the context budget.
+        # ── Phase 3: Critique phase — lean layered prompt ─────────────────────
+        # The prior draft is embedded in the system prompt (not the user turn).
+        # This keeps the critique call well within the context budget and avoids
+        # duplicating context across system + user messages.
         draft_preview = draft[:2000]
+        critique_system = build_recursive_prompt(
+            user_message=user_message,
+            phase="critique",
+            prior_draft=draft_preview,
+        )
         critique_msgs = [
-            {"role": "system", "content": critique_prompt},
+            {"role": "system", "content": critique_system},
             {
                 "role": "user",
-                "content": (
-                    f"Here is the response to critique:\n\n{draft_preview}\n\n"
-                    "Critique it now (plain text only, no tool calls):"
-                ),
+                "content": "Rate quality 1-10 and list specific issues (plain text only, no tool calls):",
             },
         ]
 
@@ -298,20 +300,26 @@ def recursive_infer(
             except Exception:
                 pass  # KB unavailable — continue without
 
-        # ── Refine: produce a corrected draft ─────────────────────────────────
-        refine_parts = [f"Issues found in your previous response:\n{critique[:800]}"]
-        if extra_context:
-            refine_parts.append(f"\nAdditional reference:\n{extra_context[:600]}")
-        refine_parts.append(
-            "\nRevise your response to fix all issues listed above. "
-            "Output ONLY the revised response — nothing else."
+        # ── Phase 3: Refine phase — full-context layered prompt, no history ───
+        # History is dropped to free ~1000 tokens.  The critique summary in the
+        # system prompt replaces history as the "memory" of what went wrong.
+        # Targeted retrieved context (NEED_DOCS) is injected here if available.
+        refine_system = build_recursive_prompt(
+            user_message=user_message,
+            phase="refine",
+            prior_critique=critique,
+            retrieved_context=extra_context,
         )
-        refine_context = "\n".join(refine_parts)
-
         refine_messages = [
-            *messages,
-            {"role": "assistant", "content": draft},
-            {"role": "user",      "content": refine_context},
+            {"role": "system", "content": refine_system},
+            {
+                "role": "user",
+                "content": (
+                    f"{user_message}\n\n"
+                    "Revise your response to fix all issues listed in the system prompt above. "
+                    "Output ONLY the revised response — nothing else."
+                ),
+            },
         ]
 
         try:

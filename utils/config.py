@@ -102,5 +102,5 @@ RETRIEVAL_CONFIG = {
     "semantic_threshold": 0.3,          # minimum cosine similarity for semantic results
 }
 
-CODEY_VERSION = "2.6.2"
+CODEY_VERSION = "2.6.3"
 CODEY_NAME    = "Codey-v2"
