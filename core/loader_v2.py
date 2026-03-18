@@ -76,6 +76,7 @@ class LlamaServer:
                 "--top-k", str(MODEL_CONFIG["top_k"]),
                 "--repeat-penalty", str(MODEL_CONFIG["repeat_penalty"]),
                 "--n-predict", str(MODEL_CONFIG["max_tokens"]),
+                "--flash-attn", "on",  # fused attention kernel, faster prefill
                 "--embedding",       # enable /v1/embeddings endpoint for hybrid KB search
                 "--pooling", "mean", # mean pooling → single vector per input (OAI-compatible)
             ]

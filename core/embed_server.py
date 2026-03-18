@@ -2,16 +2,19 @@
 """
 Dedicated embedding server for Codey-v2 knowledge base indexing.
 
-Runs nomic-embed-text (or any small GGUF) as a separate llama-server
-instance on port 8082 — distinct from the generation server on 8080.
+Runs nomic-embed-text-v1.5 (80 MB Q4, 2048 ctx, 768-dim) as a separate
+llama-server on port 8082 — distinct from the generation server on 8080/8081.
 
 Benefits:
-- Purpose-built encoder model: ~80 MB, ~50 ms/chunk (vs 7B at ~3 s/chunk)
+- ~50 ms/chunk — full 3777-chunk index builds in ~3 minutes
+- 768-dim vectors — high quality cosine similarity
+- 92.6% of chunks get hybrid BM25+vector; rest use BM25 keyword fallback
 - Never evicted by model hot-swapping in loader_v2.py
-- Generation and embedding run concurrently if needed
 
-The embed server is started automatically by the daemon in _main_loop()
-and stopped on daemon shutdown (or via pkill -f llama-server).
+Lifecycle:
+- Auto-started by daemon (_main_loop) and inference.py (_start_server)
+- Auto-restarted by daemon watchdog every 30s if dead
+- Stopped on daemon shutdown or codeyd2 stop (pkill llama-server)
 
 Usage:
     from core.embed_server import get_embed_server, start_embed_server
@@ -39,8 +42,7 @@ class EmbedServer:
     Manages a dedicated llama-server subprocess for embeddings only.
 
     Uses --embedding --pooling mean to expose /v1/embeddings in OAI format.
-    Minimal context window (2048) and thread count (2) to keep RAM low while
-    the primary 7B model is also loaded.
+    nomic-embed-text-v1.5: 2048 ctx, 768-dim, 4 threads.
     """
 
     def __init__(self):
@@ -53,15 +55,15 @@ class EmbedServer:
 
     def start(self) -> bool:
         """Start the embed server subprocess. Idempotent."""
-        # Already running?
-        if self._started and self._check_health():
+        # Already running as our own subprocess?
+        if self.process and self.process.poll() is None and self._check_health():
             return True
 
-        # Another process already serving on this port?
+        # Kill any stale llama-server occupying the embed port — it may have
+        # different settings (wrong ctx, old ubatch) from a previous run.
         if self._is_port_open():
-            info(f"Embed server already running on port {self.port}")
-            self._started = True
-            return True
+            info(f"Stale process on port {self.port} — replacing with fresh embed server...")
+            self._kill_port_occupant()
 
         if not self.model_path.exists():
             warning(f"Embed model not found: {self.model_path}")
@@ -80,8 +82,10 @@ class EmbedServer:
             "-m", str(self.model_path),
             "--host", _HOST,
             "--port", str(self.port),
-            "-c", "16384",      # 16k context — handles long KB chunks
-            "-t", "4",          # 4 threads for embedding throughput
+            "-c", "2048",        # 2k ctx — fast for 92% of chunks; rest use BM25 fallback
+            "-t", "4",           # 4 threads for embedding throughput
+            "-b", "2048",        # logical batch size matches ctx
+            "--ubatch-size", "2048",  # physical batch matches ctx
             "--embedding",      # enable /v1/embeddings endpoint
             "--pooling", "mean",# OAI-compatible single vector per input
         ]
@@ -160,6 +164,55 @@ class EmbedServer:
         return False
 
     # ── Health helpers ─────────────────────────────────────────────────────────
+
+    def _kill_port_occupant(self):
+        """Kill any llama-server bound to the embed port.
+
+        Uses /proc scan to find the exact PID holding the port, avoiding
+        unreliable pkill -f regex matching on Termux/Android.
+        """
+        import subprocess as _sp
+
+        # Method 1: parse /proc/net/tcp to find PID on our port
+        try:
+            port_hex = f"{self.port:04X}"
+            with open("/proc/net/tcp") as f:
+                for line in f:
+                    parts = line.split()
+                    if len(parts) < 10:
+                        continue
+                    local_addr = parts[1]
+                    if local_addr.endswith(f":{port_hex}"):
+                        inode = parts[9]
+                        # Find PID owning this inode
+                        for pid_dir in Path("/proc").iterdir():
+                            if not pid_dir.name.isdigit():
+                                continue
+                            try:
+                                for fd in (pid_dir / "fd").iterdir():
+                                    link = os.readlink(str(fd))
+                                    if f"socket:[{inode}]" in link:
+                                        pid = int(pid_dir.name)
+                                        info(f"Killing stale embed server PID {pid}")
+                                        os.kill(pid, 9)
+                                        raise StopIteration
+                            except (PermissionError, StopIteration, OSError):
+                                pass
+                        break
+        except StopIteration:
+            pass
+        except Exception:
+            pass
+
+        # Method 2: fallback — kill all llama-server processes
+        # This is aggressive but reliable on Termux where fuser/lsof may not exist
+        try:
+            _sp.run(["pkill", "-9", "llama-server"], capture_output=True)
+        except Exception:
+            pass
+
+        import time as _time
+        _time.sleep(2)  # give kernel time to release the port
 
     def _check_health(self) -> bool:
         try:

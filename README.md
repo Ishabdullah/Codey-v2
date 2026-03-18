@@ -21,11 +21,12 @@ Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-ba
 ## Key Features
 
 ### 🔍 Dedicated Embedding Server (v2.6.6)
-- **Purpose-built encoder**: `nomic-embed-text-v1.5` (~80 MB) runs as a permanent separate process on port 8082 — never evicted by model hot-swapping
-- **Fast index builds**: ~50 ms/chunk vs ~3 s/chunk with the 7B model — a full 3777-chunk index builds in ~3 minutes instead of ~3 hours
+- **Purpose-built encoder**: `nomic-embed-text-v1.5` (80 MB Q4, 768-dim) runs as a permanent separate process on port 8082
+- **Fast index builds**: ~50 ms/chunk — full 3777-chunk index in ~3 minutes on-device
 - **Hybrid BM25 + vector search**: Okapi BM25 (always active) merged with 768-dim cosine similarity via RRF for +15-25% retrieval recall
-- **Auto-started by daemon**: `codeyd2 start` brings up the embed server automatically; graceful stop on `codeyd2 stop`
-- **One-time setup**: `python3 -c "from tools.kb_semantic import build_semantic_index; build_semantic_index()"` after first daemon restart
+- **92.6% hybrid coverage**: Chunks >2048 tokens fall back to BM25 keyword search (still retrieved, just without vector similarity)
+- **Auto-started by daemon**: `codeyd2 start` brings up the embed server automatically; watchdog restarts it if it dies; graceful stop on `codeyd2 stop`
+- **One-time setup**: `python3 -c "from tools.kb_semantic import build_semantic_index; build_semantic_index()"`
 
 ### 🔧 Skill Loading (v2.6.5)
 - **Dynamic skill injection**: `core/skills.py` searches indexed skill repos (awesome-claude-skills, superpowers, skil, etc.) for patterns matching the current task and injects a `## Relevant Skills` block into the system prompt

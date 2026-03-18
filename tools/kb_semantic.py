@@ -173,8 +173,12 @@ def _embed_via_llama(texts: list, batch_size: int = 16) -> "np.ndarray":
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with _req.urlopen(request, timeout=60) as resp:
-            data = json.loads(resp.read())
+        try:
+            with _req.urlopen(request, timeout=60) as resp:
+                data = json.loads(resp.read())
+        except _req.HTTPError as http_err:
+            body = http_err.read().decode("utf-8", errors="replace")[:300]
+            raise RuntimeError(f"HTTP {http_err.code}: {body}") from http_err
         # Sort by index to maintain original order
         for item in sorted(data["data"], key=lambda x: x["index"]):
             all_vecs.append(item["embedding"])
@@ -376,13 +380,17 @@ def build_semantic_index() -> int:
             all_vecs = []
             skipped = 0
             dim = None
+            _first_err_logged = False
             for i, text in enumerate(texts):
                 try:
                     vec = _embed_via_llama([text], batch_size=1)[0]
                     all_vecs.append(vec)
                     if dim is None:
                         dim = len(vec)
-                except Exception:
+                except Exception as exc:
+                    if not _first_err_logged:
+                        print(f"  First error at chunk {i} ({len(text)} chars): {exc}")
+                        _first_err_logged = True
                     # Skip chunks that are too long or cause server errors
                     if dim is not None:
                         all_vecs.append([0.0] * dim)  # zero vector placeholder
@@ -458,7 +466,16 @@ def repair_failed_embeddings() -> int:
     with open(mp, encoding="utf-8") as f:
         mapping = json.load(f)
 
-    if len(vectors) != len(mapping):
+    # Pad vectors to match mapping length if some early chunks were missed entirely
+    # (they failed before dim was established, so no placeholder was written)
+    if len(vectors) < len(mapping):
+        missing = len(mapping) - len(vectors)
+        dim = vectors.shape[1]
+        print(f"[kb_semantic] Padding {missing} missing entries with zero vectors...")
+        pad = np.zeros((missing, dim), dtype="float32")
+        vectors = np.concatenate([pad, vectors], axis=0)
+        np.save(str(vp), vectors.astype("float32"))
+    elif len(vectors) > len(mapping):
         print(f"[kb_semantic] Index mismatch: {len(vectors)} vectors vs {len(mapping)} mapping entries")
         return -1
 
@@ -472,12 +489,17 @@ def repair_failed_embeddings() -> int:
 
     print(f"[kb_semantic] Found {len(failed_indices)} zero-vector chunks to repair...")
 
+    # Force a fresh probe (don't use cached result from a previous failed run)
+    global _llama_ok
+    _llama_ok = None
     if not check_llama_embeddings():
         print("[kb_semantic] llama-server not reachable — start embed server first")
         return -1
+    print(f"[kb_semantic] Embed server reachable on port {_LLAMA_PORT}")
 
     repaired = 0
     still_failed = 0
+    _first_error = None
     for i, idx in enumerate(failed_indices):
         text = mapping[idx].get("text", "")
         if not text:
@@ -489,6 +511,9 @@ def repair_failed_embeddings() -> int:
             repaired += 1
         except Exception as e:
             still_failed += 1
+            if _first_error is None:
+                _first_error = e
+                print(f"  [first error] {type(e).__name__}: {e}")
         if (i + 1) % 100 == 0 or (i + 1) == len(failed_indices):
             pct = int(100 * (i + 1) / len(failed_indices))
             print(f"  {pct}%  ({i + 1}/{len(failed_indices)}) repaired={repaired} failed={still_failed}")

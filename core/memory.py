@@ -1,15 +1,15 @@
 """
 MemoryManager — infinite context via tiered memory.
 
-Budget allocation (8192 ctx, v2.6.0):
-  System prompt:    ~500  (fixed — trimmed in v2.6.0)
+Budget allocation (32768 ctx, v2.6.6):
+  System prompt:    ~500  (fixed)
   CODEY.md:         ~200  (fixed)
   Rolling summary:  ~400  (anchor)
   Relevant files:   ~1600 (dynamic, LRU + scored)
   Recent turns:     ~1000 (last 3 pairs)
   Current message:  ~400  (current)
   Response budget:  ~2048 (model output — aligned with max_tokens)
-  Headroom:         ~2044 (safety margin)
+  Headroom:         ~26620 (large files, long sessions, big codebases)
 """
 import os
 import re

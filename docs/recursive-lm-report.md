@@ -1905,8 +1905,8 @@ New users need to populate the knowledge base before getting full benefit. The `
 
 | Model | Params | HumanEval (est.) | Context | RAM Required | Runs on Phone? |
 |---|---|---|---|---|---|
-| Qwen 2.5 Coder 7B (current) | 7B | ~45% | 8K | ~4-5 GB | Yes |
-| Recursive 7B x 3 + RAG | 7B | ~65-72% | 8K | ~4.5 GB | Yes (slower) |
+| Qwen 2.5 Coder 7B (current) | 7B | ~45% | 32K | ~4-5 GB | Yes |
+| Recursive 7B x 3 + RAG | 7B | ~65-72% | 32K | ~4.5 GB | Yes (slower) |
 | Qwen 2.5 Coder 14B | 14B | ~55-60% | 8K | ~10 GB | No |
 | CodeLlama 13B | 13B | ~50-55% | 16K | ~8 GB | No |
 | Qwen 2.5 Coder 32B | 32B | ~70-75% | 32K | ~20 GB | No |
@@ -1917,7 +1917,7 @@ New users need to populate the knowledge base before getting full benefit. The `
 ### What Recursion + RAG CAN'T Close the Gap On
 
 1. **Novel algorithmic reasoning** — For truly novel problems, larger models have fundamentally better reasoning capacity. No amount of retrieval helps if the problem requires in-context novel inference.
-2. **Context length** — Still limited to 8K. Cannot reason about an entire large codebase simultaneously.
+2. **Context length** — 32K context window (v2.6.6). Can reason about larger files but still not an entire large codebase simultaneously.
 3. **Speed** — A 32B model on a GPU produces one fast, high-quality pass. The 7B model needs 3 passes to match quality, making it ~3x slower.
 4. **Multimodal understanding** — If the task involves understanding images, diagrams, or non-text inputs, model size matters more than retrieval.
 
@@ -1987,7 +1987,21 @@ New users need to populate the knowledge base before getting full benefit. The `
 
 **Deliverable:** `load_relevant_skills()` finds and injects matching skill definitions. External repos cloned and indexed.
 
-### Phase 6: Cleanup & Simplification
+### Phase 6: Dedicated Embedding Server ✅ (v2.6.6)
+
+**Files created:**
+- `core/embed_server.py` — EmbedServer class managing nomic-embed-text-v1.5 on port 8082
+
+**Files modified:**
+- `utils/config.py` — EMBED_MODEL_PATH, EMBED_SERVER_PORT, 7B optimizations (32k ctx, 6 threads, batch 1024, q4_0 KV, flash-attn)
+- `tools/kb_semantic.py` — Default port changed to 8082, error diagnostics added
+- `core/daemon.py` — Embed server start/stop/watchdog integrated
+- `core/inference.py` — Embed server started alongside generation server
+- `codeyd2` — __pycache__ clearing + stale process cleanup on start
+
+**Deliverable:** Purpose-built embedding server separate from 7B generation. 92.6% hybrid BM25+vector coverage; 7.4% BM25-only fallback for chunks >2048 tokens. Full index builds in ~3 minutes.
+
+### Phase 7: Cleanup & Simplification
 
 **Files to modify:**
 - `core/agent.py` — Remove/simplify hallucination detection, JSON fallbacks, raw code recovery
@@ -1995,7 +2009,7 @@ New users need to populate the knowledge base before getting full benefit. The `
 
 **Deliverable:** Simpler codebase. Fewer compensatory heuristics. Recursive quality replaces post-hoc detection.
 
-### Phase 7: Adaptive Depth + Thermal Awareness
+### Phase 8: Adaptive Depth + Thermal Awareness
 
 **Files to modify:**
 - `core/recursive.py` — Battery/thermal-aware depth selection

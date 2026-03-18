@@ -14,9 +14,10 @@ SECONDARY_MODEL_PATH = Path(os.environ.get(
     Path.home() / "models" / "qwen2.5-1.5b" / "qwen2.5-1.5b-instruct-q8_0.gguf"
 ))
 
-# Dedicated embedding model (nomic-embed-text) — Option C (v2.6.6)
-# Purpose-built encoder: ~80 MB, ~50 ms/chunk, 768-dim vectors.
+# Dedicated embedding model — Option C (v2.6.6)
+# nomic-embed-text-v1.5: 80 MB Q4, 2048 ctx, 768-dim vectors.
 # Runs on port 8082, separate from the 7B generation server on 8080.
+# ~50 ms/chunk, covers 92.6% of chunks; rest use BM25 keyword fallback.
 EMBED_MODEL_PATH = Path(os.environ.get(
     "CODEY_EMBED_MODEL",
     Path.home() / "models" / "nomic-embed" / "nomic-embed-text-v1.5.Q4_K_M.gguf"
@@ -37,8 +38,8 @@ LLAMA_SERVER_BIN = os.environ.get("CODEY_LLAMA_SERVER") or shutil.which("llama-s
 LLAMA_LIB = os.environ.get("CODEY_LLAMA_LIB") or str(_HOME_LLAMA)
 
 MODEL_CONFIG = {
-    "n_ctx":          8192,
-    "n_threads":      4,
+    "n_ctx":          32768,
+    "n_threads":      6,
     "n_gpu_layers":   0,
     "verbose":        False,
     "temperature":    0.2,
@@ -46,8 +47,8 @@ MODEL_CONFIG = {
     "repeat_penalty": 1.1,
     "top_p":          0.95,
     "top_k":          40,
-    "batch_size":     256,
-    "kv_type":        "q8_0",
+    "batch_size":     1024,
+    "kv_type":        "q4_0",
     # Stop the model before it can role-play the next user turn.
     # With /v1/chat/completions, llama-server handles ChatML stop tokens
     # automatically. These extra stops catch hallucinated role-play.
@@ -68,7 +69,7 @@ THERMAL_CONFIG = {
     "warn_after_sec": 300,       # 5 minutes - log warning
     "reduce_threads_after_sec": 600,  # 10 minutes - reduce to 2 threads
     "min_threads": 2,
-    "original_threads": 4,       # Will be set from MODEL_CONFIG
+    "original_threads": 6,       # Will be set from MODEL_CONFIG
 }
 
 # Initialize original_threads from MODEL_CONFIG

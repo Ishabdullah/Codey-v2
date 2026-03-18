@@ -61,11 +61,12 @@ def _start_server():
         "--batch-size",   str(cfg["batch_size"]),
         "--cache-type-k", cfg["kv_type"],
         "--cache-type-v", cfg["kv_type"],
+        "--flash-attn", "on",  # fused attention kernel, 10-20% faster prefill
         "--port",         "8081",
         "--log-disable",
     ]
 
-    info(f"Starting llama-server (ctx={cfg['n_ctx']}, threads={cfg['n_threads']}, batch={cfg['batch_size']}, kv={cfg['kv_type']})...")
+    info(f"Starting llama-server (ctx={cfg['n_ctx']}, threads={cfg['n_threads']}, batch={cfg['batch_size']}, kv={cfg['kv_type']}, fa=on)...")
     _server_proc = subprocess.Popen(
         cmd,
         stdout=subprocess.DEVNULL,
@@ -78,6 +79,13 @@ def _start_server():
         _server_proc.kill()
         raise RuntimeError("llama-server did not become ready.")
     info("Server ready.")
+
+    # Start dedicated embed server (nomic on port 8082) alongside generation server
+    try:
+        from core.embed_server import start_embed_server
+        start_embed_server()
+    except Exception:
+        pass  # embed server is optional — BM25 fallback remains active
 
 def stop_server():
     global _server_proc

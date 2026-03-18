@@ -388,6 +388,7 @@ class Daemon:
         # Start file watch manager
         self.file_watch.start()
 
+        _embed_watchdog_ticks = 0
         try:
             while self.running:
                 # Check for reload request
@@ -400,6 +401,19 @@ class Daemon:
 
                 # Cleanup completed background tasks periodically
                 self.background.cleanup_completed(max_age=3600)
+
+                # Embed server watchdog — restart if dead (every 30s)
+                _embed_watchdog_ticks += 1
+                if _embed_watchdog_ticks >= 60:  # 60 × 0.5s = 30s
+                    _embed_watchdog_ticks = 0
+                    try:
+                        from core.embed_server import get_embed_server
+                        if not get_embed_server().is_running():
+                            warning("Embed server died — restarting...")
+                            from core.embed_server import start_embed_server
+                            start_embed_server()
+                    except Exception:
+                        pass
 
                 # Small sleep to avoid busy loop
                 await asyncio.sleep(0.5)

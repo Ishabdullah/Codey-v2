@@ -57,7 +57,14 @@ start_daemon() {
     fi
     
     echo "Starting Codey-v2 daemon..."
-    
+
+    # Clear stale Python bytecode cache so code changes take effect immediately
+    find "$CODEY_V2_DIR" -type d -name __pycache__ -exec rm -rf {} + 2>/dev/null || true
+
+    # Kill any orphaned llama-server processes from a previous session
+    pkill -9 -f "llama-server" 2>/dev/null || true
+    sleep 1
+
     # Create launcher script
     TMPSCRIPT="$(mktemp "$DAEMON_DIR/daemon_run_XXXX.py")"
     

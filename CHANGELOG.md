@@ -18,10 +18,10 @@ KB vector index now takes ~3 minutes instead of ~3 hours on-device.
 #### New file: `core/embed_server.py`
 
 - `EmbedServer` class — manages a dedicated `llama-server` subprocess for
-  embeddings only.  Runs `nomic-embed-text-v1.5.Q4_K_M.gguf` (~80 MB) on
-  **port 8082** with `--embedding --pooling mean`, `-c 2048`, `-t 2`.
-  Distinct from the 7B generation server on port 8080 — never evicted by
-  model hot-swapping, never occupies the generation slot.
+  embeddings only.  Runs `nomic-embed-text-v1.5` (80 MB Q4, 2048 ctx,
+  768-dim) on **port 8082** with `--embedding --pooling mean`,
+  `-c 2048`, `-t 4`, `--ubatch-size 2048`.  Distinct from the 7B generation
+  server — never evicted by model hot-swapping.
 - `start_embed_server()` / `stop_embed_server()` — public helpers; both
   idempotent and safe to call multiple times.
 - Startup: waits up to 30 s for `/health` to respond; logs to
@@ -31,7 +31,7 @@ KB vector index now takes ~3 minutes instead of ~3 hours on-device.
 
 #### Changes to `utils/config.py`
 
-- `EMBED_MODEL_PATH` — path to nomic GGUF (env: `CODEY_EMBED_MODEL`,
+- `EMBED_MODEL_PATH` — path to embed GGUF (env: `CODEY_EMBED_MODEL`,
   default: `~/models/nomic-embed/nomic-embed-text-v1.5.Q4_K_M.gguf`)
 - `EMBED_SERVER_PORT = 8082` — overridable via `CODEY_EMBED_PORT`
 
@@ -49,28 +49,46 @@ KB vector index now takes ~3 minutes instead of ~3 hours on-device.
   `"Embed server unavailable — BM25-only KB search active"` on failure
   (missing model file, binary not found, etc.) — never blocks daemon startup.
 - `finally` block stops the embed server on clean shutdown.
+- 30-second watchdog auto-restarts dead embed server during main loop.
 
-#### Why nomic-embed-text?
+#### Hybrid coverage: BM25 + vector
 
-| Property | 7B generation model | nomic-embed-text |
-|----------|---------------------|-----------------|
+| Property | 7B generation model | nomic-embed-text-v1.5 |
+|----------|---------------------|-----------------------|
 | Size | ~4 GB | ~80 MB |
+| Max context | 32k | 2048 |
 | Embedding speed | ~3 s/chunk | ~50 ms/chunk |
-| 3777-chunk index build | ~3 hours | ~3 minutes |
+| 3777-chunk index build | ~3 hours | **~3 min** |
 | Vector dimension | 3584-d | 768-d |
-| Purpose | Generation | Encoding only |
 
-The 768-d vectors are stored in `knowledge/embeddings/vectors.npy` alongside
+nomic-embed has a hard 2048-token context limit baked into its GGUF metadata.
+92.6% of chunks (3498/3777) get hybrid BM25+vector search; the remaining
+7.4% (279 chunks exceeding 2048 tokens) use BM25 keyword fallback — still
+searchable, just without cosine similarity ranking.
+
+768-d vectors are stored in `knowledge/embeddings/vectors.npy` alongside
 `vectors.meta.json` (records backend name + dimension so a mismatch is caught
 at query time rather than producing silent garbage results).
+
+#### 7B model optimizations (v2.6.6)
+
+- Context: 8192 → **32768** (q4_0 KV cache saves ~950 MB vs q8_0)
+- Threads: 4 → **6** (S24 Ultra has 12 cores — 50% utilization)
+- Batch size: 256 → **1024** (faster prompt processing)
+- KV cache type: q8_0 → **q4_0** (enables 32k ctx within 11 GB RAM)
+- Flash attention: **enabled** (`--flash-attn on`)
 
 #### One-time rebuild after upgrade
 
 ```bash
+# Restart daemon (clears __pycache__ + starts embed server automatically)
 codeyd2 stop && codeyd2 start
-# embed server starts automatically on port 8082
+sleep 20
+
+# Rebuild semantic index (~3 min with nomic on port 8082)
+cd ~/codey-v2
 python3 -c "from tools.kb_semantic import build_semantic_index; build_semantic_index()"
-# ~3 min — writes vectors.npy at 768-dim (nomic)
+# writes vectors.npy at 768-dim (nomic-embed-text-v1.5)
 ```
 
 ### Changed
