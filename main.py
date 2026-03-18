@@ -76,12 +76,24 @@ def apply_overrides(args):
     if args.ctx:
         config.MODEL_CONFIG["n_ctx"] = args.ctx
 
+def _daemon_is_running() -> bool:
+    """Check if the daemon is running (PID file check)."""
+    try:
+        from core.daemon import check_pid_file
+        return check_pid_file()
+    except Exception:
+        return False
+
+
 def shutdown():
     # Stop system monitor
     try:
         get_monitor().stop()
     except Exception:
         pass
+    # If daemon is running, leave llama-server alive for it
+    if _daemon_is_running():
+        return
     # Unload model and kill llama-server on port 8080
     try:
         from core.loader_v2 import get_loader
@@ -150,6 +162,18 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
         from core.sessions import clear_session
         clear_session()
         success("History, context, undo history, and saved session cleared.")
+        return True, history
+
+    if low == "/summarize":
+        if len(history) < 4:
+            info("Not enough history to summarize (need at least 2 turns).")
+        else:
+            from core.summarizer import summarize_history
+            from core.tokens import estimate_messages_tokens
+            old_tokens = estimate_messages_tokens(history)
+            history = summarize_history(history)
+            new_tokens = estimate_messages_tokens(history)
+            success(f"Context compressed: {old_tokens} → {new_tokens} tokens")
         return True, history
 
     if low.startswith("/undo"):
@@ -742,6 +766,7 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
 
 [bold]Session:[/bold]
   /sessions              List all saved sessions
+  /summarize             Compress conversation to save context
   /clear                 Clear history, context, undo, session
   /exit                  Save session and quit
 

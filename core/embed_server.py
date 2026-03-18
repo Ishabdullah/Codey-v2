@@ -83,7 +83,7 @@ class EmbedServer:
             "--host", _HOST,
             "--port", str(self.port),
             "-c", "2048",        # 2k ctx — fast for 92% of chunks; rest use BM25 fallback
-            "-t", "4",           # 4 threads for embedding throughput
+            "-t", "2",           # 2 threads for embedding (keep CPU headroom for 7B)
             "-b", "2048",        # logical batch size matches ctx
             "--ubatch-size", "2048",  # physical batch matches ctx
             "--embedding",      # enable /v1/embeddings endpoint

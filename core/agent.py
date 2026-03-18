@@ -26,6 +26,17 @@ def _get_learning():
         _learning = get_learning_manager()
     return _learning
 
+def _note_save(args):
+    from core.notes import add_note
+    add_note(args["key"], args["value"])
+    return f"Remembered: {args['key']} = {args['value']}"
+
+def _note_forget(args):
+    from core.notes import remove_note
+    if remove_note(args["key"]):
+        return f"Forgot: {args['key']}"
+    return f"No note found for: {args['key']}"
+
 TOOLS = {
     "read_file":    lambda args: tool_read_file(args["path"]),
     "write_file":   lambda args: tool_write_file(args["path"], args["content"]),
@@ -34,12 +45,15 @@ TOOLS = {
     "list_dir":     lambda args: tool_list_dir(args.get("path", ".")),
     "shell":        lambda args: shell(args["command"]),
     "search_files": lambda args: search_files(args["pattern"], args.get("path", ".")),
+    "note_save":    _note_save,
+    "note_forget":  _note_forget,
 }
 ROGUE_TAG_MAP = {
     "write_file": "write_file", "read_file": "read_file",
     "patch_file": "patch_file", "shell": "shell",
     "append_file": "append_file", "list_dir": "list_dir",
     "search_files": "search_files",
+    "note_save": "note_save", "note_forget": "note_forget",
 }
 
 HALLUCINATION_MARKERS = [
@@ -47,6 +61,8 @@ HALLUCINATION_MARKERS = [
     "<|im_start|>", "<|im_end|>",
     # System-prompt echo — model regurgitating its own context
     "\n## Loaded Files", "\n## Project Memory", "\n## Current Project",
+    "\n## User Notes", "\n## Project Map", "\n## User Preferences",
+    "\n## Relevant Skills", "\n## Reference Material", "\n## Repo Map",
     # Code leakage — model echoing source after prose (common with small models)
     "\nfrom core.", "\nfrom utils.", "\nfrom prompts.", "\nfrom tools.",
     "\nimport core.", "\nimport utils.",
@@ -56,6 +72,8 @@ HALLUCINATION_MARKERS = [
 # These stop llama-server generation before leakage gets streamed to stdout.
 _LEAK_STOP_SEQUENCES = [
     "\n## Loaded Files", "\n## Project Memory", "\n## Current Project",
+    "\n## User Notes", "\n## Project Map", "\n## User Preferences",
+    "\n## Relevant Skills", "\n## Reference Material", "\n## Repo Map",
     "\nfrom core.", "\nfrom utils.", "\nfrom prompts.", "\nfrom tools.",
     "\nimport core.", "\nimport utils.",
 ]
@@ -334,10 +352,15 @@ def is_hallucination(response, user_message, tools_used):
     file_done = any("write_file" in s or "patch_file" in s for s in tools_used)
     shell_done = any("shell" in s for s in tools_used)
 
-    # Only flag strong past-tense completion claims with zero tool usage
+    # Flag 1: strong past-tense completion claims with zero tool usage
     _strong_claims = ["has been created", "i created", "i've created", "has been written"]
     false_file = (needs_file and not file_done and not tools_used
                   and any(c in resp_lower for c in _strong_claims))
+
+    # Flag 2: model showed code in markdown blocks instead of using write_file
+    # (common failure mode — model "explains" instead of acting)
+    if needs_file and not file_done and not tools_used and "```" in response:
+        false_file = True
 
     false_run = (needs_run and not shell_done and not tools_used
                  and any(c in resp_lower for c in ["ran successfully", "executed successfully"]))
@@ -479,6 +502,10 @@ def _auto_apply_peer_code(peer_output):
 
 
 def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, _in_subtask=False):
+    # Reset streaming flag at start of each agent turn
+    import core.inference_v2 as _inf_mod
+    _inf_mod._last_was_streamed = False
+
     # Learn preferences from natural language in the user's message
     _get_learning().learn_from_message(user_message)
 
@@ -610,17 +637,19 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
     # Tick memory manager — evicts stale files, advances turn counter
     from core.memory import memory as _mem
     _mem.tick()
-    # Compress/summarize history — use only one path per call to avoid double inference
-    if len(history) >= 8:
-        history = _mem.compress_summary(history)
-        # Trim to keep only the summary + recent turns in memory
-        keep = AGENT_CONFIG["history_turns"] * 2
-        if len(history) > keep:
-            history = history[-keep:]
-    elif should_summarize(history):
-        history = summarize_history(history)
     # ── Phase 3: Layered system prompt (draft phase) ──────────────────────────
     sys_prompt = build_recursive_prompt(user_message, phase="draft")
+    messages = [{"role": "system", "content": sys_prompt}]
+
+    # Adaptive context management — only compress when context > 75% of n_ctx
+    # Build a temporary full messages array for accurate token measurement
+    _tmp_msgs = messages + history + [{"role": "user", "content": user_message}]
+    if should_summarize(history, system_messages=_tmp_msgs):
+        history = summarize_history(history)
+        # Also try memory manager compression for file context
+        if len(history) >= 8:
+            history = _mem.compress_summary(history)
+    # Rebuild messages with potentially compressed history
     messages = [{"role": "system", "content": sys_prompt}]
     
     # Pre-inference guide: if it's a question or conversation, tell it NOT to use tools
@@ -634,10 +663,12 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
         # Previously missing — caused QA false-positives for real edit requests:
         "replace", "rename", "swap", "convert", "change", "append", "insert",
         "move", "copy", "print", "output", "display", "open",
+        # Memory triggers — should use note_save/note_forget tools:
+        "remember", "don't forget", "forget",
         # Peer delegation triggers — "ask gemini to X" should never be QA:
-        "ask", "call", "have", "use",
+        "ask gemini", "ask claude", "call gemini", "call claude",
     ]
-    _has_action = any(k in msg_low for k in _action_kws)
+    _has_action = any(re.search(r'\b' + re.escape(k) + r'\b', msg_low) for k in _action_kws)
     _question_starters = (
         "what", "why", "how", "when", "where", "who", "which",
         "is ", "are ", "do ", "does ", "can ", "could ", "would ",
@@ -653,7 +684,7 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
         any(re.search(r'\b' + re.escape(k) + r'\b', msg_low) for k in _qa_phrases)
     )
     if is_qa:
-        messages.append({"role": "user", "content": "IMPORTANT: This is a question or conversation. Respond with plain text only. DO NOT use any tools."})
+        messages.append({"role": "user", "content": "IMPORTANT: This is a question or conversation. Respond with plain text only. DO NOT use any tools. Keep your response concise — 2-3 sentences max unless more detail is needed."})
 
     keep = AGENT_CONFIG["history_turns"] * 2
     messages.extend(history[-keep:] if len(history) > keep else history)
@@ -694,13 +725,15 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             and RECURSIVE_CONFIG.get("enabled", True)
         )
         _stop = ["</tool>"] + _LEAK_STOP_SEQUENCES
+        _qa_max_tokens = 512 if is_qa else None
         if _use_recursive:
             try:
                 from core.recursive import recursive_infer, classify_breadth_need
                 _breadth = classify_breadth_need(user_message)
                 if _breadth == "minimal":
                     response = infer(messages, stream=True,
-                                     extra_stop=_stop, show_thinking=True)
+                                     extra_stop=_stop, show_thinking=True,
+                                     max_tokens=_qa_max_tokens)
                 else:
                     _depth = 2 if _breadth == "deep" else 1
                     response = recursive_infer(
@@ -714,9 +747,11 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             except Exception:
                 # Recursive inference unavailable — fall back to plain infer
                 response = infer(messages, stream=True,
-                                 extra_stop=_stop, show_thinking=True)
+                                 extra_stop=_stop, show_thinking=True,
+                                 max_tokens=_qa_max_tokens)
         else:
-            response = infer(messages, stream=True, extra_stop=_stop, show_thinking=True)
+            response = infer(messages, stream=True, extra_stop=_stop,
+                             show_thinking=True, max_tokens=_qa_max_tokens)
         response = clean_response(response)
         tool_dict = parse_tool_call(response)
         if tool_dict:
@@ -724,7 +759,7 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             args = tool_dict.get("args", {})
             
             # SANITY CHECK: prevent hallucinated tool usage
-            if is_qa and name not in ["read_file", "list_dir"]:
+            if is_qa and name not in ["read_file", "list_dir", "note_save", "note_forget"]:
                  warning(f"Model tried to use '{name}' for a general question.")
                  messages.append({"role": "assistant", "content": response})
                  messages.append({"role": "user", "content": "Just answer my question directly with text. No tools needed. Final answer format: 'I can help with [tasks].'"})

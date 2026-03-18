@@ -25,12 +25,12 @@ LLAMA_LIB = os.environ.get("CODEY_LLAMA_LIB") or str(_HOME_LLAMA)
 
 MODEL_CONFIG = {
     "n_ctx":          32768,
-    "n_threads":      6,
+    "n_threads":      4,
     "n_gpu_layers":   0,
     "verbose":        False,
     "temperature":    0.2,
     "max_tokens":     2048,
-    "repeat_penalty": 1.1,
+    "repeat_penalty": 1.2,
     "top_p":          0.95,
     "top_k":          40,
     "batch_size":     1024,
@@ -55,7 +55,7 @@ THERMAL_CONFIG = {
     "warn_after_sec": 300,       # 5 minutes - log warning
     "reduce_threads_after_sec": 600,  # 10 minutes - reduce to 2 threads
     "min_threads": 2,
-    "original_threads": 6,       # Will be set from MODEL_CONFIG
+    "original_threads": 4,       # Will be set from MODEL_CONFIG
     # Adaptive recursion depth thresholds
     "temp_critical": 80,         # °C — skip recursion entirely
     "temp_warn":     65,         # °C — cap recursion depth to 1

@@ -1,14 +1,16 @@
 """
-Conversation summarization.
-When history gets too long, compress it to save context window space.
-Inspired by Claude Code's conversation summarization agent prompt.
+Conversation summarization — adaptive context management.
+
+Summarization triggers when context usage exceeds 75% of n_ctx.
+After that threshold, the agent becomes context-aware and decides
+when compression is needed based on remaining headroom.
 """
 from utils.logger import info, warning
-from utils.config import AGENT_CONFIG
+from utils.config import AGENT_CONFIG, MODEL_CONFIG
 from core.tokens import estimate_messages_tokens
 
-# Token estimate threshold before we summarize
-SUMMARY_THRESHOLD = 1500  # ~6000 chars
+# Summarize when total message tokens exceed this fraction of n_ctx
+SUMMARIZE_THRESHOLD_PCT = 0.75
 
 SUMMARIZE_PROMPT = """You are summarizing a coding assistant conversation to save context space.
 
@@ -23,9 +25,27 @@ Keep the summary under 200 words. Be specific about file names, error messages, 
 Write in past tense. Start with: "Previously: "
 """
 
-def should_summarize(history: list[dict]) -> bool:
-    """Return True if history is getting too large."""
-    return estimate_messages_tokens(history) > SUMMARY_THRESHOLD
+
+def should_summarize(history: list[dict], system_messages: list[dict] = None) -> bool:
+    """
+    Return True if context usage has crossed the 75% threshold.
+
+    Args:
+        history: Conversation history messages
+        system_messages: Optional full messages array (system + history + current).
+                         If provided, uses this for a more accurate usage estimate.
+    """
+    if not history or len(history) < 4:
+        return False
+
+    msgs = system_messages if system_messages else history
+    used = estimate_messages_tokens(msgs)
+    budget = MODEL_CONFIG["n_ctx"]
+    response_reserve = MODEL_CONFIG.get("max_tokens", 2048)
+
+    # Trigger when used + response reserve > 75% of total context
+    return (used + response_reserve) > (budget * SUMMARIZE_THRESHOLD_PCT)
+
 
 def summarize_history(history: list[dict]) -> list[dict]:
     """
@@ -44,7 +64,8 @@ def summarize_history(history: list[dict]) -> list[dict]:
     if not to_summarize:
         return history
 
-    info("Summarizing conversation history to save context...")
+    old_tokens = estimate_messages_tokens(history)
+    info(f"Compressing context ({old_tokens} tokens, {len(history)} messages)...")
 
     # Build summary request
     history_text = "\n".join(
@@ -58,14 +79,16 @@ def summarize_history(history: list[dict]) -> list[dict]:
     ]
 
     try:
-        summary = infer(summary_messages, stream=False)
+        summary = infer(summary_messages, stream=False, max_tokens=300)
         if summary and not summary.startswith("[ERROR]"):
             summary_message = {
                 "role": "user",
                 "content": f"[CONVERSATION SUMMARY]\n{summary}\n[END SUMMARY]"
             }
             new_history = [summary_message] + keep_recent
-            info(f"History compressed: {len(history)} → {len(new_history)} messages")
+            new_tokens = estimate_messages_tokens(new_history)
+            info(f"Context compressed: {len(history)} → {len(new_history)} messages, "
+                 f"{old_tokens} → {new_tokens} tokens")
             return new_history
     except Exception as e:
         warning(f"Summarization failed: {e}")

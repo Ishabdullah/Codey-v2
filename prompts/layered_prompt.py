@@ -131,6 +131,15 @@ _PREF_LABELS = {
 }
 
 
+def _get_notes_block() -> str:
+    """Return persistent user notes block, or empty string."""
+    try:
+        from core.notes import get_notes_block
+        return get_notes_block()
+    except Exception:
+        return ""
+
+
 def _get_preferences_block() -> str:
     """Return formatted user-preferences block, or empty string on failure."""
     try:
@@ -247,6 +256,7 @@ def _build_draft_prompt(user_message: str) -> str:
 
     p = LayeredPrompt(budget_chars=12000)
     p.add("identity",  SYSTEM_PROMPT,             priority=0, required=True)
+    p.add("notes",     _get_notes_block(),          priority=1)
     p.add("prefs",     _get_preferences_block(),   priority=1)
     p.add("project",   _get_project_block(),        priority=2)
     p.add("repo_map",  _get_repo_map_block(),       priority=3)

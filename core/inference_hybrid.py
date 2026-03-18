@@ -154,7 +154,15 @@ class ChatCompletionBackend:
         tokens = 0
         tps = 0.0
 
-        with urllib.request.urlopen(req, timeout=300) as response:
+        # Repeat detection circuit breaker — stops babbling
+        _recent_sentences = []
+        _repeat_count = 0
+        _MAX_REPEATS = 2  # stop after 2 repeated phrases
+
+        # Use try/finally instead of `with` — urllib's context manager tries to
+        # read remaining data on exit, which blocks if the server is still sending.
+        response = urllib.request.urlopen(req, timeout=300)
+        try:
             for raw_line in response:
                 line = raw_line.decode('utf-8').rstrip('\n\r')
 
@@ -176,9 +184,25 @@ class ChatCompletionBackend:
                             sys.stdout.write(content)
                             sys.stdout.flush()
                             full_text.append(content)
+
+                            # Circuit breaker: detect repeated sentences
+                            built = ''.join(full_text)
+                            if content in '.!?\n' and len(built) > 80:
+                                # Extract last ~60 chars as a "sentence"
+                                tail = built[-60:].strip()
+                                if tail in _recent_sentences:
+                                    _repeat_count += 1
+                                    if _repeat_count >= _MAX_REPEATS:
+                                        warning("Repeat detected — stopping generation")
+                                        break
+                                else:
+                                    _recent_sentences.append(tail)
+                                    # Keep window small
+                                    if len(_recent_sentences) > 6:
+                                        _recent_sentences.pop(0)
+
                         # Break on finish_reason (backup for [DONE])
                         if choices[0].get('finish_reason'):
-                            # Grab timings from this final chunk if present
                             if 'timings' in chunk:
                                 t = chunk['timings']
                                 predicted = t.get('predicted_n', 0)
@@ -199,6 +223,14 @@ class ChatCompletionBackend:
 
                 except (json.JSONDecodeError, KeyError):
                     pass
+        finally:
+            # Force-close the socket immediately — don't let urllib
+            # try to drain remaining bytes (causes the hang).
+            try:
+                response.fp._sock.close()
+            except Exception:
+                pass
+            response.close()
 
         # End of stream — move to a new line
         sys.stdout.write('\n')

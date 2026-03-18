@@ -50,7 +50,7 @@ def _get_chat_backend():
 
 def infer(messages: list[dict], stream: bool = False, extra_stop: list = None,
           model: str = None, show_thinking: bool = False,
-          use_hybrid: bool = True) -> str:
+          use_hybrid: bool = True, max_tokens: int = None) -> str:
     """
     Run inference using /v1/chat/completions (ChatML).
 
@@ -61,6 +61,7 @@ def infer(messages: list[dict], stream: bool = False, extra_stop: list = None,
         model: Ignored (single-model mode — always uses primary 7B)
         show_thinking: Show thinking indicator
         use_hybrid: Use chat completions backend (default True)
+        max_tokens: Override max tokens (default: MODEL_CONFIG["max_tokens"])
 
     Returns:
         Generated text or error message
@@ -77,7 +78,7 @@ def infer(messages: list[dict], stream: bool = False, extra_stop: list = None,
         backend = _get_chat_backend()
         if backend and backend != "http_fallback":
             try:
-                return _infer_chat(backend, messages, extra_stop, show_thinking, stream)
+                return _infer_chat(backend, messages, extra_stop, show_thinking, stream, max_tokens)
             except Exception as e:
                 warning(f"Chat completions failed: {e}, falling back to HTTP")
 
@@ -86,7 +87,8 @@ def infer(messages: list[dict], stream: bool = False, extra_stop: list = None,
 
 
 def _infer_chat(backend, messages: list[dict], extra_stop: list,
-                show_thinking: bool, stream: bool = False) -> str:
+                show_thinking: bool, stream: bool = False,
+                max_tokens: int = None) -> str:
     """Run inference via /v1/chat/completions — proper ChatML."""
     global last_tps, _last_was_streamed
 
@@ -98,8 +100,9 @@ def _infer_chat(backend, messages: list[dict], extra_stop: list,
     if show_thinking:
         console.print("[dim]\u2901 Thinking...[/dim]")
 
+    _max = max_tokens or MODEL_CONFIG.get("max_tokens", 2048)
     start = time.time()
-    result = backend.infer(messages, max_tokens=MODEL_CONFIG.get("max_tokens", 2048),
+    result = backend.infer(messages, max_tokens=_max,
                            stop=stop, stream=stream)
 
     if result is None:
@@ -110,7 +113,10 @@ def _infer_chat(backend, messages: list[dict], extra_stop: list,
     text, tokens, tps = result
     elapsed = time.time() - start
     last_tps = tps
-    _last_was_streamed = stream
+    # Only update the flag when streaming — non-streaming calls (like critique)
+    # must not overwrite a True set by a prior streaming draft call.
+    if stream:
+        _last_was_streamed = True
 
     # When streaming, tokens were already printed live — skip the "Done" line
     # to avoid cluttering the output. For blocking mode, show the summary.

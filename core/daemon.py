@@ -375,6 +375,17 @@ class Daemon:
         # claimed and executed twice.  All task dispatch goes through
         # _process_planner_tasks, which uses try_claim_task() for atomic claiming.
 
+        # Pre-load 7B model (llama-server on port 8080) so it's ready for CLI
+        try:
+            from core.loader_v2 import get_loader
+            loader = get_loader()
+            if loader.ensure_model():
+                info("7B model pre-loaded (port 8080)")
+            else:
+                warning("7B model pre-load failed — will load on first request")
+        except Exception as _e:
+            warning(f"7B model pre-load skipped: {_e}")
+
         # Start dedicated embedding server (nomic-embed on port 8082)
         try:
             from core.embed_server import start_embed_server
@@ -388,7 +399,7 @@ class Daemon:
         # Start file watch manager
         self.file_watch.start()
 
-        _embed_watchdog_ticks = 0
+        _watchdog_ticks = 0
         try:
             while self.running:
                 # Check for reload request
@@ -402,10 +413,20 @@ class Daemon:
                 # Cleanup completed background tasks periodically
                 self.background.cleanup_completed(max_age=3600)
 
-                # Embed server watchdog — restart if dead (every 30s)
-                _embed_watchdog_ticks += 1
-                if _embed_watchdog_ticks >= 60:  # 60 × 0.5s = 30s
-                    _embed_watchdog_ticks = 0
+                # Watchdog — check servers every 30s (60 × 0.5s)
+                _watchdog_ticks += 1
+                if _watchdog_ticks >= 60:
+                    _watchdog_ticks = 0
+                    # 7B model server watchdog
+                    try:
+                        from core.loader_v2 import get_loader
+                        _loader = get_loader()
+                        if not _loader.get_loaded_model():
+                            warning("7B model server died — restarting...")
+                            _loader.load_primary()
+                    except Exception:
+                        pass
+                    # Embed server watchdog
                     try:
                         from core.embed_server import get_embed_server
                         if not get_embed_server().is_running():
