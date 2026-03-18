@@ -88,9 +88,39 @@ def clean_response(text):
 def extract_json(raw):
     """
     Extract JSON from LLM output. Handles trailing commas, missing closing
-    braces, and literal newlines inside strings.
+    braces, literal newlines inside strings, and Python triple-quotes.
     """
     raw = raw.strip()
+
+    # Fix Python triple-quotes → JSON strings (common 7B model error)
+    # Replace """...""" with "..." (escaping inner quotes and newlines)
+    def _fix_triple_quotes(s):
+        result = []
+        i = 0
+        while i < len(s):
+            if s[i:i+3] == '"""':
+                # Find closing triple-quote
+                end = s.find('"""', i + 3)
+                if end == -1:
+                    # No closing triple-quote — take rest of string
+                    inner = s[i+3:]
+                    i = len(s)
+                else:
+                    inner = s[i+3:end]
+                    i = end + 3
+                # Escape for JSON: backslashes, quotes, newlines
+                inner = inner.replace('\\', '\\\\')
+                inner = inner.replace('"', '\\"')
+                inner = inner.replace('\n', '\\n')
+                result.append('"' + inner + '"')
+            else:
+                result.append(s[i])
+                i += 1
+        return ''.join(result)
+
+    if '"""' in raw:
+        raw = _fix_triple_quotes(raw)
+
     if not raw.startswith('{'):
         # Try to find the start of a JSON block
         idx = raw.find('{')
