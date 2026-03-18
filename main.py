@@ -885,6 +885,11 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
             console.print("\n[dim]Interrupted.[/dim]")
 
     while True:
+        # Reset terminal state before prompting — streaming uses raw
+        # sys.stdout.write() which can leave terminal in a bad state
+        # for Rich's console.input().
+        sys.stdout.write('\033[0m')
+        sys.stdout.flush()
         loaded = ctx.list_loaded()
         suffix = f" [bold dim]({len(loaded)} file{'s' if len(loaded)!=1 else ''})[/bold dim]" if loaded else ""
         try:

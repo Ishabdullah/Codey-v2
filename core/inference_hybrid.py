@@ -232,8 +232,11 @@ class ChatCompletionBackend:
                 pass
             response.close()
 
-        # End of stream — move to a new line
-        sys.stdout.write('\n')
+        # End of stream — move to a new line and reset terminal attributes.
+        # Raw sys.stdout.write() during streaming bypasses Rich's console,
+        # leaving the terminal in an inconsistent state. The ANSI reset
+        # (\033[0m) ensures Rich's console.input() gets a clean terminal.
+        sys.stdout.write('\n\033[0m')
         sys.stdout.flush()
 
         elapsed = time.time() - start
