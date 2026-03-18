@@ -1999,7 +1999,7 @@ New users need to populate the knowledge base before getting full benefit. The `
 - `core/inference.py` — Embed server started alongside generation server
 - `codeyd2` — __pycache__ clearing + stale process cleanup on start
 
-**Deliverable:** Purpose-built embedding server separate from 7B generation. 92.6% hybrid BM25+vector coverage; 7.4% BM25-only fallback for chunks >2048 tokens. Full index builds in ~3 minutes.
+**Deliverable:** Purpose-built embedding server separate from 7B generation. 92.6% hybrid BM25+vector coverage; 7.4% BM25-only fallback for chunks >2048 tokens. Full 3777-chunk index builds in ~1 hour on S24 Ultra.
 
 ### Phase 7: Cleanup & Simplification
 

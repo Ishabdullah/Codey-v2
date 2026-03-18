@@ -6,9 +6,9 @@ Runs nomic-embed-text-v1.5 (80 MB Q4, 2048 ctx, 768-dim) as a separate
 llama-server on port 8082 — distinct from the generation server on 8080/8081.
 
 Benefits:
-- ~50 ms/chunk — full 3777-chunk index builds in ~3 minutes
 - 768-dim vectors — high quality cosine similarity
-- 92.6% of chunks get hybrid BM25+vector; rest use BM25 keyword fallback
+- 92.6% of chunks get hybrid BM25+vector; 7.4% (>2048 tok) use BM25 fallback
+- Full 3777-chunk index builds in ~1 hour on S24 Ultra (~1s/chunk)
 - Never evicted by model hot-swapping in loader_v2.py
 
 Lifecycle:
