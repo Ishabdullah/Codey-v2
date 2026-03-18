@@ -104,51 +104,24 @@ def parse_task_list(model_output):
     return _postprocess_plan(tasks[:5])
 
 
-# Steps that produce no useful output — pure verification/review
-_WASTE_PATTERNS = [
-    "verify", "check the", "check output", "review the code",
-    "test the server", "navigate to", "save file", "open browser",
-    "confirm that", "ensure that", "make sure",
-]
-
 # Filename extraction pattern
 _FILE_RE = re.compile(r'\b(\w+\.(?:py|js|ts|html|css|json|yaml|yml|toml|txt|md|sh))\b')
 
 
 def _postprocess_plan(tasks):
     """
-    Post-process plan steps from the model to fix common issues:
-    1. Merge steps that target the same file
-    2. Remove waste steps (verify, check, review)
-    3. Remove .db/.sqlite creation steps
-    4. Cap at 3 steps
+    Post-process plan steps: merge same-file steps and cap count.
+
+    Recursive planning (Phase 4) self-corrects waste steps and quality,
+    so this only handles structural deduplication.
     """
     if not tasks:
         return tasks
 
-    # Remove waste steps
-    filtered = []
-    for t in tasks:
-        t_low = t.lower()
-        # Skip pure verification steps
-        if any(p in t_low for p in _WASTE_PATTERNS) and not any(
-            k in t_low for k in ["write", "create", "implement", "build"]
-        ):
-            continue
-        # Skip .db/.sqlite creation steps
-        if any(ext in t_low for ext in ['.db', '.sqlite', '.sqlite3']) and \
-           any(k in t_low for k in ['create', 'set up', 'initialize']):
-            if not any(k in t_low for k in ['write', 'python', '.py']):
-                continue
-        filtered.append(t)
-
-    if not filtered:
-        return tasks[:1]  # Don't return empty — keep at least one
-
     # Merge steps targeting the same file — keep the longer description
     merged = []
     seen_files = {}  # filename -> index in merged list
-    for t in filtered:
+    for t in tasks:
         files_in_step = _FILE_RE.findall(t)
         merged_into = None
         for f in files_in_step:
@@ -156,7 +129,6 @@ def _postprocess_plan(tasks):
                 merged_into = seen_files[f]
                 break
         if merged_into is not None:
-            # Keep the longer/more detailed description
             if len(t) > len(merged[merged_into]):
                 merged[merged_into] = t
         else:

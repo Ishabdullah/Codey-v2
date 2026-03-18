@@ -43,20 +43,10 @@ ROGUE_TAG_MAP = {
 }
 
 HALLUCINATION_MARKERS = [
-    # Role-play turn boundaries — model hallucinating the next user message
-    "\nUser:", "\nUser\n", "\nUSER\n",
-    "\nHuman:", "\nHuman\n",
-    "\nA: ", "\nA:\n",
-    # Lowercase / mixed variants
-    "\nuser\n", "\nuser:",
-    "\nassistant\n", "\nASSISTANT\n", "\nAssistant\n",
-    "user\n#", "assistant\n", "user\ncreate", "user\nwrite", "user\nedit", "user\nrun",
-    # System-prompt echo markers
-    "\n## Loaded Files", "\n## Project Memory", "\n## Current Project",
-    "## Project Memory\n", "## Loaded Files\n",
-    "## Loaded Files", "## Project Memory",
-    # ChatML tokens
+    # ChatML tokens — always strip (model leaking special tokens)
     "<|im_start|>", "<|im_end|>",
+    # System-prompt echo — model regurgitating its own context
+    "\n## Loaded Files", "\n## Project Memory", "\n## Current Project",
 ]
 
 def clean_response(text):
@@ -68,20 +58,8 @@ def clean_response(text):
 
 def extract_json(raw):
     """
-    Extract JSON from LLM output with robust handling of malformed JSON.
-    
-    Handles common LLM artifacts:
-    - Trailing commas
-    - Missing closing braces
-    - Escaped characters in strings
-    - Multi-line strings
-    - Unquoted values for certain keys
-    
-    Args:
-        raw: Raw LLM output potentially containing JSON
-        
-    Returns:
-        Parsed JSON as dict, or None if parsing fails
+    Extract JSON from LLM output. Handles trailing commas, missing closing
+    braces, and literal newlines inside strings.
     """
     raw = raw.strip()
     if not raw.startswith('{'):
@@ -162,33 +140,6 @@ def extract_json(raw):
         except (json.JSONDecodeError, ValueError):
             pass
 
-    # Final fallback: manual regex extraction for known keys
-    # Improved to handle escaped characters and multi-line values
-    result = {}
-    for key in ["name", "path", "content", "command", "pattern", "old_str", "new_str"]:
-        # Try quoted value first (handles escaped characters properly)
-        m = re.search(rf'"{key}"\s*:\s*"((?:[^"\\]|\\.)*)"', candidate, re.DOTALL)
-        if m:
-            # Properly unescape the string
-            value = m.group(1)
-            # Handle common escape sequences
-            value = value.replace('\\n', '\n').replace('\\t', '\t').replace('\\r', '\r')
-            value = value.replace('\\"', '"').replace('\\\\', '\\')
-            result[key] = value
-            continue
-        
-        # Try unquoted value (for paths, commands, simple values)
-        m = re.search(rf'"{key}"\s*:\s*([^,}}\n]+)', candidate)
-        if m:
-            value = m.group(1).strip().strip('"').strip()
-            if value:
-                result[key] = value
-
-    if result:
-        name = result.pop("name", None)
-        if name:
-            return {"name": name, "args": result}
-        return result
     return None
 
 def parse_tool_call(text):
@@ -355,68 +306,31 @@ def is_error(result, tool_name):
 
 def is_hallucination(response, user_message, tools_used):
     """
-    Detect if the model is hallucinating (claiming actions it didn't take).
-    
-    Uses keyword matching plus past/future tense analysis to reduce false positives
-    when the model describes what it *will* do vs. what it *has done*.
-    
-    Args:
-        response: Model's response text
-        user_message: Original user request
-        tools_used: List of tool names that were actually called
-        
+    Lightweight hallucination check — catches only the most obvious cases.
+
+    With recursive self-critique (Phase 2+), most hallucination is caught
+    during inference. This is a final safety net for clear false claims.
+
     Returns:
         Tuple of (false_file, false_run) booleans
     """
     msg_lower = user_message.lower()
     resp_lower = response.lower()
-    
-    # Check what the user requested
-    needs_file = any(k in msg_lower for k in [
-        "create", "write", "make", "build", "implement", "add", "generate",
-    ])
+
+    needs_file = any(k in msg_lower for k in ["create", "write", "make", "build", "implement"])
     needs_run = any(k in msg_lower for k in ["run", "execute", "test"])
-    
-    # Check what tools were actually called
+
     file_done = any("write_file" in s or "patch_file" in s for s in tools_used)
     shell_done = any("shell" in s for s in tools_used)
-    
-    # Past tense claims (indicates action was supposedly completed)
-    past_tense_claims = [
-        "has been created", "was created", "have created", "i created",
-        "successfully created", "file has been", "has been written", 
-        "created the file", "is already implemented", "already implemented", 
-        "capability is already", "already exists", "is implemented in",
-        "i've created", "i have written", "i wrote", "i modified",
-        "i fixed", "i ran", "i executed", "i ran the", "i executed the",
-    ]
-    
-    # Future tense indicators (model describing what it will do, not what it did)
-    future_tense_indicators = [
-        "will create", "will write", "will make", "will build",
-        "going to create", "going to write", "going to run",
-        "let me create", "let me write", "let me run", "let me check",
-        "i'll create", "i will create", "i'll write", "i will write",
-        "i'll run", "i will run", "i'll fix", "i will fix",
-        "i can create", "i can write", "i can help",
-        "i should create", "i need to create", "i need to run",
-        "next i will", "then i will", "now i will",
-        "i'm going to", "i am going to",
-        "let's create", "let's write", "let's run",
-    ]
-    
-    # Check for past tense claims without corresponding tool calls
-    has_past_claim = any(claim in resp_lower for claim in past_tense_claims)
-    has_future_indicator = any(ind in resp_lower for ind in future_tense_indicators)
-    
-    # If model uses past tense but no tool was called, likely hallucination
-    # If model uses future tense, it's describing intent, not claiming completion
-    false_file = needs_file and not file_done and has_past_claim and not has_future_indicator
-    false_run = needs_run and not shell_done and any(p in resp_lower for p in [
-        "run successfully", "executed successfully", "created and run", 
-        "ran successfully", "i ran the", "i executed the",
-    ]) and not has_future_indicator
-    
+
+    # Only flag strong past-tense completion claims with zero tool usage
+    _strong_claims = ["has been created", "i created", "i've created", "has been written"]
+    false_file = (needs_file and not file_done and not tools_used
+                  and any(c in resp_lower for c in _strong_claims))
+
+    false_run = (needs_run and not shell_done and not tools_used
+                 and any(c in resp_lower for c in ["ran successfully", "executed successfully"]))
+
     return false_file, false_run
 
 def build_system_prompt(message=""):
@@ -740,7 +654,7 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
     duplicate_count = 0
     hallucination_count = 0
     auto_retries = 0
-    max_retries = 2
+    max_retries = 1
     error_log = []        # accumulates error text for peer CLI context
     files_touched = []    # accumulates file paths for peer CLI context
     # Subtasks writing large files need more steps than simple Q&A.
@@ -861,15 +775,7 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                 auto_retries += 1
                 warning("Error detected — auto-retry " + str(auto_retries) + "/" + str(max_retries))
                 messages.append({"role": "assistant", "content": _format_tool_for_history(tool_dict)})
-                _retry_path = args.get("path", "the file")
-                # Tailor retry message based on error type
-                if "not found" in last_tool_result.lower() or "no such file" in last_tool_result.lower():
-                    # File doesn't exist — tell model to CREATE it, not fix it
-                    messages.append({"role": "user", "content": f"{_retry_path} does not exist yet. Create it now with write_file. Write the COMPLETE file content."})
-                elif "syntax" in last_tool_result.lower():
-                    messages.append({"role": "user", "content": "Error:\n" + last_tool_result + f"\n\nRewrite {_retry_path} with corrected syntax. Write the COMPLETE file."})
-                else:
-                    messages.append({"role": "user", "content": "Error:\n" + last_tool_result + f"\n\nFix the error in {_retry_path}. Use write_file with the corrected version."})
+                messages.append({"role": "user", "content": "Error:\n" + last_tool_result[:400] + "\n\nFix the error and try again."})
                 continue
             elif is_error(last_tool_result, name) and auto_retries >= max_retries and not _in_subtask:
                 # Exhausted retries — offer to escalate to a peer CLI
@@ -891,52 +797,17 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             messages.append({"role": "assistant", "content": _format_tool_for_history(tool_dict)})
             messages.append({"role": "user", "content": "Tool result: " + last_tool_result[:500] + "\nNext action or final answer:"})
             continue
-        # ── Raw code recovery ─────────────────────────────────────────────
-        # If model dumped raw code instead of using tags, detect and auto-wrap.
-        # Common with 7B models that ignore tool format instructions.
-        if _in_subtask and not tools_used:
-            _code_starts = ("#!/", "import ", "from ", "def ", "class ", "\"\"\"", "'''", "const ", "function ", "var ", "let ")
-            _stripped = response.strip()
-            # Also detect markdown code blocks: ```python\ncode\n```
-            _code_block_match = re.search(r'```(?:python|javascript|typescript)?\s*\n(.*?)(?:```|\Z)', _stripped, re.DOTALL)
-            _raw_code = None
-            if _code_block_match:
-                _raw_code = _code_block_match.group(1).strip()
-            elif _stripped and any(_stripped.startswith(s) for s in _code_starts):
-                _raw_code = _stripped
-
-            if _raw_code and len(_raw_code) > 50:
-                # Extract target filename from the prompt
-                _fname_match = re.search(r'(\w+\.(?:py|js|ts|html|css|json))', user_message)
-                _fname = _fname_match.group(1) if _fname_match else None
-                if _fname:
-                    info(f"Auto-wrapping raw code output as write_file({_fname})")
-                    _auto_tool = {"name": "write_file", "args": {"path": _fname, "content": _raw_code}}
-                    last_tool_result = execute_tool(_auto_tool)
-                    tools_used.append("write_file:" + json.dumps({"path": _fname}, sort_keys=True))
-                    if is_error(last_tool_result, "write_file"):
-                        error_log.append(last_tool_result[:300])
-                    messages.append({"role": "assistant", "content": response})
-                    messages.append({"role": "user", "content": "Tool result: " + last_tool_result[:500] + "\nNext action or final answer:"})
-                    continue
-
         false_file, false_run = is_hallucination(response, user_message, tools_used)
-        if false_file or false_run:
+        if (false_file or false_run) and hallucination_count == 0:
             hallucination_count += 1
             missing = []
             if false_file: missing.append("write_file")
             if false_run:  missing.append("shell")
-            if hallucination_count >= 3:
-                warning("Model repeatedly hallucinated. Try rephrasing your request.")
-                separator()
-                history.append({"role": "user",     "content": user_message})
-                history.append({"role": "assistant", "content": response})
-                return response, history
             fname_match = re.search(r"(\w+\.py)", user_message)
             fname = fname_match.group(1) if fname_match else "output.py"
             tool_hint = '<tool>\n{"name": "write_file", "args": {"path": "' + fname + '", "content": "YOUR CODE"}}\n</tool>'
             messages.append({"role": "assistant", "content": response})
-            messages.append({"role": "user", "content": "The file does not exist. You must call " + " and ".join(missing) + ".\nOutput ONLY a tool call:\n" + tool_hint})
+            messages.append({"role": "user", "content": "You must call " + " and ".join(missing) + ".\nOutput ONLY a tool call:\n" + tool_hint})
             continue
         separator()
         history.append({"role": "user",     "content": user_message})
