@@ -22,7 +22,7 @@ Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-ba
 
 ### 🔍 Dedicated Embedding Server (v2.6.6)
 - **Purpose-built encoder**: `nomic-embed-text-v1.5` (80 MB Q4, 768-dim) runs as a permanent separate process on port 8082
-- **Fast index builds**: ~50 ms/chunk — full 3777-chunk index in ~3 minutes on-device
+- **Full index builds**: ~1 hour for 3777 chunks on S24 Ultra (~1s/chunk); 92.6% get vector embeddings, 7.4% fall back to BM25-only
 - **Hybrid BM25 + vector search**: Okapi BM25 (always active) merged with 768-dim cosine similarity via RRF for +15-25% retrieval recall
 - **92.6% hybrid coverage**: Chunks >2048 tokens fall back to BM25 keyword search (still retrieved, just without vector similarity)
 - **Auto-started by daemon**: `codeyd2 start` brings up the embed server automatically; watchdog restarts it if it dies; graceful stop on `codeyd2 stop`
