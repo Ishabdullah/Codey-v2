@@ -320,7 +320,7 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
                                 f"There are merge conflicts after merging branch '{arg}'. "
                                 f"Please resolve them.\n\n" + "\n\n".join(conflict_context)
                             )
-                            history = run_agent(prompt, history, ctx)
+                            history = run_agent(prompt, history, yolo=yolo)
                     else:
                         info("Resolve conflicts manually, then run: /git commit")
                 else:

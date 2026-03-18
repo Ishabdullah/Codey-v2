@@ -215,10 +215,18 @@ _CACHE_TTL = 120.0  # seconds
 
 
 def _files_hash():
-    """Hash of currently loaded file names — cache invalidator."""
+    """Hash of loaded file names + content mtimes — invalidates on edit."""
     try:
         from core.context import list_loaded
-        return tuple(sorted(list_loaded()))
+        import os
+        paths = sorted(list_loaded())
+        mtimes = []
+        for p in paths:
+            try:
+                mtimes.append(os.path.getmtime(p))
+            except OSError:
+                mtimes.append(0)
+        return tuple(zip(paths, mtimes))
     except Exception:
         return ()
 

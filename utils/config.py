@@ -28,11 +28,11 @@ MODEL_CONFIG = {
     "n_threads":      4,
     "n_gpu_layers":   0,
     "verbose":        False,
-    "temperature":    0.2,
+    "temperature":    0.7,
     "max_tokens":     2048,
-    "repeat_penalty": 1.2,
-    "top_p":          0.95,
-    "top_k":          40,
+    "repeat_penalty": 1.1,
+    "top_p":          0.8,
+    "top_k":          20,
     "batch_size":     1024,
     "kv_type":        "q4_0",
     # Stop the model before it can role-play the next user turn.
@@ -56,9 +56,9 @@ THERMAL_CONFIG = {
     "reduce_threads_after_sec": 600,  # 10 minutes - reduce to 2 threads
     "min_threads": 2,
     "original_threads": 4,       # Will be set from MODEL_CONFIG
-    # Adaptive recursion depth thresholds
-    "temp_critical": 80,         # °C — skip recursion entirely
-    "temp_warn":     65,         # °C — cap recursion depth to 1
+    # Adaptive recursion depth thresholds (tuned for Snapdragon — runs hotter)
+    "temp_critical": 90,         # °C — skip recursion entirely
+    "temp_warn":     75,         # °C — cap recursion depth to 1
     "batt_critical":  5,         # % — skip recursion (not charging)
     "batt_low":      15,         # % — cap recursion depth to 1 (not charging)
 }

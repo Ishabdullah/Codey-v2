@@ -40,7 +40,7 @@ Usage:
 import re
 from typing import Optional
 
-from utils.config import RECURSIVE_CONFIG, THERMAL_CONFIG
+from utils.config import RECURSIVE_CONFIG, THERMAL_CONFIG, MODEL_CONFIG
 from prompts.layered_prompt import build_recursive_prompt
 from utils.logger import info, warning
 
@@ -170,7 +170,12 @@ def extract_rating(critique: str) -> Optional[float]:
     Matches patterns like "Quality: 8/10", "7/10", "9 / 10".
     Returns None if no rating found.
     """
+    # "8/10", "8 / 10", "8.5/10"
     m = re.search(r'(\d+(?:\.\d+)?)\s*/\s*10', critique)
+    if m:
+        return float(m.group(1))
+    # "8 out of 10"
+    m = re.search(r'(\d+(?:\.\d+)?)\s+out\s+of\s+10', critique, re.IGNORECASE)
     if m:
         return float(m.group(1))
     return None
@@ -320,7 +325,7 @@ def recursive_infer(
                 critique_msgs,
                 stream=False,
                 # Block tool calls inside the critique response
-                extra_stop=["<tool>", "\nUser:", "\nHuman:", "<|im_end|>"],
+                extra_stop=["<tool>", "\nUser:", "\nHuman:"] + MODEL_CONFIG.get("stop", []),
                 show_thinking=False,
             )
             critique = _strip_tool_calls(critique_raw).strip()
