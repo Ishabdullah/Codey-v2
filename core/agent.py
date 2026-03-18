@@ -59,10 +59,15 @@ ROGUE_TAG_MAP = {
 HALLUCINATION_MARKERS = [
     # ChatML tokens — always strip (model leaking special tokens)
     "<|im_start|>", "<|im_end|>",
-    # System-prompt echo — model regurgitating its own context
+    # System-prompt echo — model regurgitating its own context (## headers)
     "\n## Loaded Files", "\n## Project Memory", "\n## Current Project",
     "\n## User Notes", "\n## Project Map", "\n## User Preferences",
     "\n## Relevant Skills", "\n## Reference Material", "\n## Repo Map",
+    # CODEY.md echo — model regurgitating project memory (# headers)
+    "\n# Project", "\n# Stack", "\n# Structure", "\n# Commands",
+    "\n# Conventions", "\n# Notes",
+    # CODEY.md list items — model echoing config lines
+    "\n- Code style:", "\n- Naming:", "\n- Logging:", "\n- Imports:",
     # Code leakage — model echoing source after prose (common with small models)
     "\nfrom core.", "\nfrom utils.", "\nfrom prompts.", "\nfrom tools.",
     "\nimport core.", "\nimport utils.",
@@ -74,6 +79,9 @@ _LEAK_STOP_SEQUENCES = [
     "\n## Loaded Files", "\n## Project Memory", "\n## Current Project",
     "\n## User Notes", "\n## Project Map", "\n## User Preferences",
     "\n## Relevant Skills", "\n## Reference Material", "\n## Repo Map",
+    "\n# Project", "\n# Stack", "\n# Structure", "\n# Commands",
+    "\n# Conventions", "\n# Notes",
+    "\n- Code style:", "\n- Naming:", "\n- Logging:", "\n- Imports:",
     "\nfrom core.", "\nfrom utils.", "\nfrom prompts.", "\nfrom tools.",
     "\nimport core.", "\nimport utils.",
 ]
