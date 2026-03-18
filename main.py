@@ -885,25 +885,23 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
             console.print("\n[dim]Interrupted.[/dim]")
 
     while True:
-        # Reset terminal state before prompting — streaming uses raw
-        # sys.stdout.write() which can leave terminal in a bad state
-        # for Rich's console.input().
-        sys.stdout.write('\033[0m')
-        sys.stdout.flush()
         loaded = ctx.list_loaded()
-        suffix = f" [bold dim]({len(loaded)} file{'s' if len(loaded)!=1 else ''})[/bold dim]" if loaded else ""
+        file_hint = f" ({len(loaded)} file{'s' if len(loaded)!=1 else ''})" if loaded else ""
         try:
-            user_input = console.input(f"[bold blue]You{suffix}>[/bold blue] ").strip()
+            # Use plain input() instead of Rich console.input() —
+            # Rich's input conflicts with raw sys.stdout.write() used
+            # during streaming, causing the REPL to hang after responses.
+            user_input = input(f"\033[1;34mYou{file_hint}>\033[0m ").strip()
         except (KeyboardInterrupt, EOFError):
             save_session(history)
-            console.print("\n[dim]Session saved. Goodbye![/dim]")
+            print("\nSession saved. Goodbye!")
             shutdown()
             break
         except Exception as e:
             # Handle any terminal input errors gracefully
             error(f"Input error: {e}")
             save_session(history)
-            console.print("\n[dim]Session saved. Exiting...[/dim]")
+            print("\nSession saved. Exiting...")
             shutdown()
             break
 
