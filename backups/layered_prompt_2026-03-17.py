@@ -46,7 +46,6 @@ Usage:
     )
 """
 
-import time
 from dataclasses import dataclass, field
 
 
@@ -193,32 +192,6 @@ def _get_file_block(user_message: str) -> str:
     return ""
 
 
-# ── Draft prompt cache ────────────────────────────────────────────────────────
-# Avoids re-running RAG retrieval, skills loading, and file context gathering
-# on every call.  Invalidated when loaded files change or TTL expires.
-
-_draft_cache = {
-    "prompt": None,
-    "built_at": 0.0,
-    "files_hash": None,
-}
-_CACHE_TTL = 120.0  # seconds
-
-
-def _files_hash():
-    """Hash of currently loaded file names — cache invalidator."""
-    try:
-        from core.context import list_loaded
-        return tuple(sorted(list_loaded()))
-    except Exception:
-        return ()
-
-
-def invalidate_prompt_cache():
-    """Force a fresh build on the next draft call."""
-    _draft_cache["prompt"] = None
-
-
 # ── Phase-specific builders ───────────────────────────────────────────────────
 
 def _build_draft_prompt(user_message: str) -> str:
@@ -235,14 +208,6 @@ def _build_draft_prompt(user_message: str) -> str:
       3 Relevant skill patterns (Phase 5)
       4 Loaded files
     """
-    # Check cache — reuse if files haven't changed and TTL hasn't expired
-    now = time.time()
-    current_fh = _files_hash()
-    if (_draft_cache["prompt"] is not None
-            and now - _draft_cache["built_at"] < _CACHE_TTL
-            and _draft_cache["files_hash"] == current_fh):
-        return _draft_cache["prompt"]
-
     from prompts.system_prompt import SYSTEM_PROMPT
 
     p = LayeredPrompt(budget_chars=12000)
@@ -272,13 +237,7 @@ def _build_draft_prompt(user_message: str) -> str:
             pass  # Skills unavailable — continue without
 
     p.add("files", _get_file_block(user_message), priority=4)
-    result = p.build()
-
-    # Store in cache
-    _draft_cache["prompt"] = result
-    _draft_cache["built_at"] = now
-    _draft_cache["files_hash"] = current_fh
-    return result
+    return p.build()
 
 
 def _build_critique_prompt(prior_draft: str) -> str:

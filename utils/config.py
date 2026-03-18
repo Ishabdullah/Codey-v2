@@ -8,12 +8,6 @@ MODEL_PATH = Path(os.environ.get(
     Path.home() / "models" / "qwen2.5-coder-7b" / "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
 ))
 
-# Secondary model (1.5B for simple tasks) - Phase 3
-SECONDARY_MODEL_PATH = Path(os.environ.get(
-    "CODEY_SECONDARY_MODEL",
-    Path.home() / "models" / "qwen2.5-1.5b" / "qwen2.5-1.5b-instruct-q8_0.gguf"
-))
-
 # Dedicated embedding model — Option C (v2.6.6)
 # nomic-embed-text-v1.5: 80 MB Q4, 2048 ctx, 768-dim vectors.
 # Runs on port 8082, separate from the 7B generation server on 8080.
@@ -23,14 +17,6 @@ EMBED_MODEL_PATH = Path(os.environ.get(
     Path.home() / "models" / "nomic-embed" / "nomic-embed-text-v1.5.Q4_K_M.gguf"
 ))
 EMBED_SERVER_PORT = int(os.environ.get("CODEY_EMBED_PORT", "8082"))
-
-# Router configuration - Phase 3
-ROUTER_CONFIG = {
-    "simple_max_chars": 50,         # Under this length → consider simple
-    "simple_keywords": ["hello", "hi", "hey", "thanks", "thank you", "bye", "goodbye"],
-    "swap_cooldown_sec": 30,        # Cooldown before swapping back to primary
-    "swap_delay_sec": 3,            # Expected delay for model swap
-}
 
 # Detection of llama-server binary and library path
 _HOME_LLAMA = Path.home() / "llama.cpp" / "build" / "bin"
@@ -117,5 +103,5 @@ RETRIEVAL_CONFIG = {
     "semantic_threshold": 0.3,          # minimum cosine similarity for semantic results
 }
 
-CODEY_VERSION = "2.6.8"
+CODEY_VERSION = "2.6.9"
 CODEY_NAME    = "Codey-v2"

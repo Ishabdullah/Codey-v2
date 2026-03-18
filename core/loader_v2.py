@@ -5,11 +5,7 @@ Model loader for Codey-v2 - Termux/Android compatible.
 Uses llama-server binary via subprocess instead of llama-cpp-python bindings
 (since llama-cpp-python doesn't support Android platform).
 
-Features:
-- Primary model (7B) for complex tasks
-- Secondary model (1.5B) for simple tasks
-- HTTP API communication with llama-server
-- Model hot-swap with cooldown
+Single-model architecture: always loads the primary 7B model.
 """
 
 import subprocess
@@ -20,13 +16,11 @@ import urllib.error
 import json
 import os
 import signal
-from typing import Optional, Literal
+from typing import Optional
 from pathlib import Path
 
 from utils.logger import info, warning, error, success
-from utils.config import MODEL_PATH, SECONDARY_MODEL_PATH, MODEL_CONFIG, ROUTER_CONFIG, LLAMA_SERVER_BIN
-
-ModelType = Literal["primary", "secondary"]
+from utils.config import MODEL_PATH, MODEL_CONFIG, LLAMA_SERVER_BIN
 
 # llama-server configuration
 SERVER_HOST = "127.0.0.1"
@@ -36,18 +30,17 @@ SERVER_PORT = 8080  # Default llama-server port
 class LlamaServer:
     """
     Manages llama-server subprocess and HTTP API communication.
-    
+
     Starts llama-server as a background process and communicates
     via HTTP API for inference.
     """
-    
-    def __init__(self, model_path: Path, model_type: ModelType):
+
+    def __init__(self, model_path: Path):
         self.model_path = model_path
-        self.model_type = model_type
         self.process: Optional[subprocess.Popen] = None
         self.port = SERVER_PORT
         self._started = False
-        
+
     def start(self) -> bool:
         """Start llama-server subprocess."""
         try:
@@ -61,8 +54,8 @@ class LlamaServer:
                 self._started = True
                 return True
 
-            info(f"Starting llama-server for {self.model_type} model...")
-            
+            info(f"Starting llama-server...")
+
             # Build command
             cmd = [
                 str(LLAMA_SERVER_BIN),
@@ -80,35 +73,35 @@ class LlamaServer:
                 "--embedding",       # enable /v1/embeddings endpoint for hybrid KB search
                 "--pooling", "mean", # mean pooling → single vector per input (OAI-compatible)
             ]
-            
+
             # Add stop tokens (using --reverse-prompt)
             for stop in MODEL_CONFIG.get("stop", []):
                 cmd.extend(["--reverse-prompt", stop])
-            
+
             # Start process - redirect output to log file to avoid pipe buffer issues
             log_file = Path.home() / ".codey-v2" / "llama-server.log"
             log_file.parent.mkdir(parents=True, exist_ok=True)
-            
+
             with open(log_file, "w") as f:
                 f.write(f"Starting llama-server: {' '.join(cmd)}\n")
                 f.flush()
-            
+
             # Open log file for appending stdout/stderr
             log_fd = open(log_file, "a")
-            
+
             self.process = subprocess.Popen(
                 cmd,
                 stdout=log_fd,
                 stderr=subprocess.STDOUT,
                 preexec_fn=os.setsid if os.name != 'nt' else None,
             )
-            
+
             info(f"llama-server PID: {self.process.pid}, logging to {log_file}")
-            
+
             # Wait for server to be ready (up to 60 seconds for large models)
             for i in range(120):  # 120 * 0.5s = 60s timeout
                 time.sleep(0.5)
-                
+
                 # Check if process died
                 if self.process.poll() is not None:
                     error(f"llama-server process died (exit code {self.process.poll()})")
@@ -120,24 +113,24 @@ class LlamaServer:
                     except:
                         pass
                     return False
-                
+
                 if self._check_health():
                     # Give server a moment to fully initialize all endpoints
                     time.sleep(0.5)
                     self._started = True
-                    success(f"llama-server started for {self.model_type} model on port {self.port}")
+                    success(f"llama-server started on port {self.port}")
                     return True
-                    
+
             error(f"Timeout waiting for llama-server to start")
             self.stop()
             return False
-            
+
         except Exception as e:
             error(f"Failed to start llama-server: {e}")
             import traceback
             error(traceback.format_exc())
             return False
-    
+
     def stop(self):
         if self.process:
             try:
@@ -269,7 +262,7 @@ class LlamaServer:
 
         error(f"All retries failed: {last_error}")
         return None
-    
+
     def is_running(self) -> bool:
         """Check if server process is running."""
         if self.process is not None:
@@ -282,40 +275,25 @@ class LlamaServer:
 
 class ModelLoader:
     """
-    Manages model loading and hot-swapping via llama-server.
+    Manages model loading via llama-server.
 
-    Supports:
-    - Load primary (7B) or secondary (1.5B) model
-    - Unload current model
-    - Hot-swap with cooldown
-    - Track loaded model state
-    - LRU cache for quick model restart (SIGSTOP instead of kill)
+    Single-model: always loads the primary 7B Qwen2.5-Coder model.
     """
 
     def __init__(self):
-        self._loaded_model: Optional[ModelType] = None
+        self._loaded: bool = False
         self._server: Optional[LlamaServer] = None
         self._loaded_at: float = 0
         self._load_failures: int = 0
-        # LRU cache: keep stopped servers for quick restart
-        self._stopped_servers: dict[ModelType, LlamaServer] = {}
 
     def load_primary(self) -> bool:
         """Load the primary (7B) model."""
-        return self._load_model("primary", MODEL_PATH)
-
-    def load_secondary(self) -> bool:
-        """Load the secondary (1.5B) model."""
-        return self._load_model("secondary", SECONDARY_MODEL_PATH)
-
-    def _load_model(self, model_type: ModelType, model_path: Path) -> bool:
-        """Internal method to load a model."""
         try:
-            info(f"Loading {model_type} model: {model_path.name}")
+            info(f"Loading model: {MODEL_PATH.name}")
 
             # Check if model file exists
-            if not model_path.exists():
-                error(f"Model file not found: {model_path}")
+            if not MODEL_PATH.exists():
+                error(f"Model file not found: {MODEL_PATH}")
                 self._load_failures += 1
                 return False
 
@@ -326,90 +304,43 @@ class ModelLoader:
                 self._load_failures += 1
                 return False
 
-            # Check if we have a cached server for this model type
-            if model_type in self._stopped_servers:
-                info(f"Resuming cached {model_type} model server...")
-                cached_server = self._stopped_servers[model_type]
-                # Resume the stopped process
-                try:
-                    import signal
-                    os.killpg(os.getpgid(cached_server.process.pid), signal.SIGCONT)
-                    time.sleep(0.5)  # Give it a moment to resume
-                    if cached_server._check_health():
-                        self._server = cached_server
-                        self._loaded_model = model_type
-                        self._loaded_at = time.time()
-                        del self._stopped_servers[model_type]
-                        success(f"Resumed {model_type} model from cache")
-                        return True
-                except Exception as e:
-                    warning(f"Failed to resume cached server: {e}")
-                    # Fall through to fresh start
-
-            # Unload current model if different
-            if self._loaded_model != model_type:
-                self.unload()
-
-            # Start new server
-            self._server = LlamaServer(model_path, model_type)
+            # Start server
+            self._server = LlamaServer(MODEL_PATH)
             if not self._server.start():
                 self._load_failures += 1
                 return False
 
-            self._loaded_model = model_type
+            self._loaded = True
             self._loaded_at = time.time()
-
-            success(f"Loaded {model_type} model ({model_path.name})")
+            success(f"Loaded model ({MODEL_PATH.name})")
             return True
 
         except Exception as e:
-            error(f"Failed to load {model_type} model: {e}")
+            error(f"Failed to load model: {e}")
             self._load_failures += 1
             return False
 
     def unload(self):
-        """
-        Unload the current model.
-        
-        Instead of killing the process, uses SIGSTOP to pause it.
-        This allows quick restart without full reload delay.
-        """
+        """Unload (stop) the current model server."""
         if self._server:
-            info(f"Pausing {self._loaded_model} model server (keeping in cache)...")
-            try:
-                import signal
-                # Pause the process instead of killing it
-                if self._server.process:
-                    os.killpg(os.getpgid(self._server.process.pid), signal.SIGSTOP)
-                # Store in cache for quick restart
-                self._stopped_servers[self._loaded_model] = self._server
-                success(f"{self._loaded_model} model paused and cached")
-            except Exception as e:
-                warning(f"Error pausing server (falling back to stop): {e}")
-                self._server.stop()
-            finally:
-                self._server = None
-                self._loaded_model = None
+            info("Stopping model server...")
+            self._server.stop()
+            self._server = None
+            self._loaded = False
 
-    def ensure_model(self, model_type: ModelType) -> bool:
-        """Ensure a specific model is loaded."""
-        if self._loaded_model == model_type and self._server and self._server.is_running():
+    def ensure_model(self, model_type: str = "primary") -> bool:
+        """Ensure the model is loaded and running."""
+        if self._loaded and self._server and self._server.is_running():
             return True
+        return self.load_primary()
 
-        if model_type == "primary":
-            return self.load_primary()
-        else:
-            return self.load_secondary()
-
-    def get_loaded_model(self) -> Optional[ModelType]:
+    def get_loaded_model(self) -> Optional[str]:
         """Get the currently loaded model type."""
-        return self._loaded_model
+        return "primary" if self._loaded else None
 
-    def is_loaded(self, model_type: ModelType = None) -> bool:
-        """Check if a model is loaded (optionally check specific type)."""
-        if model_type is None:
-            return self._loaded_model is not None
-        return self._loaded_model == model_type
+    def is_loaded(self, model_type: str = None) -> bool:
+        """Check if the model is loaded."""
+        return self._loaded
 
     def get_model_instance(self) -> Optional[LlamaServer]:
         """Get the llama-server instance."""
@@ -426,7 +357,7 @@ class ModelLoader:
     def get_status(self) -> dict:
         """Get loader status."""
         return {
-            "loaded_model": self._loaded_model,
+            "loaded_model": "primary" if self._loaded else None,
             "loaded_at": self._loaded_at,
             "uptime_seconds": time.time() - self._loaded_at if self._loaded_at else 0,
             "load_failures": self._load_failures,

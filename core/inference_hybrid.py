@@ -11,6 +11,7 @@ Backend: TCP HTTP to llama-server on port 8080 (started by loader_v2 or daemon).
 """
 
 import os
+import sys
 import time
 import socket
 import urllib.request
@@ -60,23 +61,22 @@ class ChatCompletionBackend:
             return False
 
     def infer(self, messages: list, max_tokens: int = 2048,
-              stop: List[str] = None) -> Optional[str]:
+              stop: List[str] = None, stream: bool = False) -> Optional[tuple]:
         """
         Run inference via /v1/chat/completions.
 
         Args:
-            messages: Chat messages list [{"role": "system", "content": "..."},
-                      {"role": "user", "content": "..."}, ...]
+            messages:   Chat messages list
             max_tokens: Maximum tokens to generate
-            stop: Additional stop sequences
+            stop:       Additional stop sequences
+            stream:     If True, print tokens to stdout as they arrive (SSE)
 
         Returns:
-            Generated text or None on error
+            (text, tokens, tps) tuple or None on error
         """
         try:
             start = time.time()
 
-            # Build stop tokens
             stop_tokens = list(MODEL_CONFIG.get("stop", []))
             if stop:
                 stop_tokens.extend(s for s in stop if s not in stop_tokens)
@@ -90,7 +90,7 @@ class ChatCompletionBackend:
                 "top_k": MODEL_CONFIG["top_k"],
                 "repeat_penalty": MODEL_CONFIG["repeat_penalty"],
                 "stop": stop_tokens,
-                "stream": False,
+                "stream": stream,
             }
 
             req = urllib.request.Request(
@@ -100,37 +100,10 @@ class ChatCompletionBackend:
                 method='POST'
             )
 
-            with urllib.request.urlopen(req, timeout=300) as response:
-                result = json.loads(response.read().decode('utf-8'))
-
-            elapsed = time.time() - start
-            self._calls_made += 1
-
-            # Extract response text
-            text = result["choices"][0]["message"]["content"]
-
-            # Extract token stats if available
-            tokens = 0
-            tps = 0.0
-            if "usage" in result:
-                tokens = result["usage"].get("completion_tokens", 0)
-            if "timings" in result:
-                t = result["timings"]
-                predicted = t.get("predicted_n", 0)
-                ms = t.get("predicted_ms", 0)
-                if ms > 0:
-                    tps = round((predicted / ms) * 1000, 1)
-                    tokens = predicted
-
-            if not tokens:
-                tokens = len(text.split())  # rough fallback
-
-            if not tps and elapsed > 0:
-                tps = round(tokens / elapsed, 1)
-
-            info(f"Chat completions: {tokens} tokens in {elapsed:.1f}s ({tps:.1f} t/s)")
-
-            return text.strip(), tokens, tps
+            if stream:
+                return self._infer_streaming(req, start)
+            else:
+                return self._infer_blocking(req, start)
 
         except urllib.error.URLError as e:
             error(f"Chat completions failed: {e}")
@@ -138,6 +111,110 @@ class ChatCompletionBackend:
         except Exception as e:
             error(f"Chat completions failed: {e}")
             return None
+
+    def _infer_blocking(self, req, start: float) -> Optional[tuple]:
+        """Non-streaming inference — waits for full response before returning."""
+        with urllib.request.urlopen(req, timeout=300) as response:
+            result = json.loads(response.read().decode('utf-8'))
+
+        elapsed = time.time() - start
+        self._calls_made += 1
+
+        text = result["choices"][0]["message"]["content"]
+
+        tokens = 0
+        tps = 0.0
+        if "usage" in result:
+            tokens = result["usage"].get("completion_tokens", 0)
+        if "timings" in result:
+            t = result["timings"]
+            predicted = t.get("predicted_n", 0)
+            ms = t.get("predicted_ms", 0)
+            if ms > 0:
+                tps = round((predicted / ms) * 1000, 1)
+                tokens = predicted
+
+        if not tokens:
+            tokens = len(text.split())
+        if not tps and elapsed > 0:
+            tps = round(tokens / elapsed, 1)
+
+        info(f"Chat completions: {tokens} tokens in {elapsed:.1f}s ({tps:.1f} t/s)")
+        return text.strip(), tokens, tps
+
+    def _infer_streaming(self, req, start: float) -> Optional[tuple]:
+        """
+        SSE streaming inference — prints each token to stdout as it arrives.
+
+        llama-server sends newline-delimited SSE chunks:
+            data: {"choices":[{"delta":{"content":"Hello"},...}],...}
+            data: [DONE]
+        """
+        full_text = []
+        tokens = 0
+        tps = 0.0
+
+        with urllib.request.urlopen(req, timeout=300) as response:
+            for raw_line in response:
+                line = raw_line.decode('utf-8').rstrip('\n\r')
+
+                if line == 'data: [DONE]':
+                    break
+                if not line:
+                    continue
+
+                if not line.startswith('data: '):
+                    continue
+
+                try:
+                    chunk = json.loads(line[6:])
+                    choices = chunk.get('choices', [])
+                    if choices:
+                        delta = choices[0].get('delta', {})
+                        content = delta.get('content')
+                        if content:
+                            sys.stdout.write(content)
+                            sys.stdout.flush()
+                            full_text.append(content)
+                        # Break on finish_reason (backup for [DONE])
+                        if choices[0].get('finish_reason'):
+                            # Grab timings from this final chunk if present
+                            if 'timings' in chunk:
+                                t = chunk['timings']
+                                predicted = t.get('predicted_n', 0)
+                                ms = t.get('predicted_ms', 0)
+                                if ms > 0:
+                                    tps = round((predicted / ms) * 1000, 1)
+                                    tokens = predicted
+                            break
+
+                    # timings arrive in the final chunk
+                    if 'timings' in chunk:
+                        t = chunk['timings']
+                        predicted = t.get('predicted_n', 0)
+                        ms = t.get('predicted_ms', 0)
+                        if ms > 0:
+                            tps = round((predicted / ms) * 1000, 1)
+                            tokens = predicted
+
+                except (json.JSONDecodeError, KeyError):
+                    pass
+
+        # End of stream — move to a new line
+        sys.stdout.write('\n')
+        sys.stdout.flush()
+
+        elapsed = time.time() - start
+        self._calls_made += 1
+
+        text = ''.join(full_text)
+        if not tokens:
+            tokens = len(text.split())
+        if not tps and elapsed > 0:
+            tps = round(tokens / elapsed, 1)
+
+        info(f"Chat completions (stream): {tokens} tokens in {elapsed:.1f}s ({tps:.1f} t/s)")
+        return text.strip(), tokens, tps
 
     @property
     def backend_name(self) -> str:

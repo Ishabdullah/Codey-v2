@@ -47,6 +47,17 @@ HALLUCINATION_MARKERS = [
     "<|im_start|>", "<|im_end|>",
     # System-prompt echo — model regurgitating its own context
     "\n## Loaded Files", "\n## Project Memory", "\n## Current Project",
+    # Code leakage — model echoing source after prose (common with small models)
+    "\nfrom core.", "\nfrom utils.", "\nfrom prompts.", "\nfrom tools.",
+    "\nimport core.", "\nimport utils.",
+]
+
+# Subset of markers safe to use as server-side stop sequences.
+# These stop llama-server generation before leakage gets streamed to stdout.
+_LEAK_STOP_SEQUENCES = [
+    "\n## Loaded Files", "\n## Project Memory", "\n## Current Project",
+    "\nfrom core.", "\nfrom utils.", "\nfrom prompts.", "\nfrom tools.",
+    "\nimport core.", "\nimport utils.",
 ]
 
 def clean_response(text):
@@ -634,12 +645,12 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
     )
     _qa_phrases = [
         "tell me", "tell me about", "explain", "help me understand",
-        "what can you", "hello", "hi ", "hey ", "thanks", "thank you",
+        "what can you", "hello", "hi", "hey", "thanks", "thank you",
     ]
     is_qa = not _has_action and (
         msg_low.endswith("?") or
         msg_low.startswith(_question_starters) or
-        any(k in msg_low for k in _qa_phrases)
+        any(re.search(r'\b' + re.escape(k) + r'\b', msg_low) for k in _qa_phrases)
     )
     if is_qa:
         messages.append({"role": "user", "content": "IMPORTANT: This is a question or conversation. Respond with plain text only. DO NOT use any tools."})
@@ -682,13 +693,14 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             and not is_qa
             and RECURSIVE_CONFIG.get("enabled", True)
         )
+        _stop = ["</tool>"] + _LEAK_STOP_SEQUENCES
         if _use_recursive:
             try:
                 from core.recursive import recursive_infer, classify_breadth_need
                 _breadth = classify_breadth_need(user_message)
                 if _breadth == "minimal":
                     response = infer(messages, stream=True,
-                                     extra_stop=["</tool>"], show_thinking=True)
+                                     extra_stop=_stop, show_thinking=True)
                 else:
                     _depth = 2 if _breadth == "deep" else 1
                     response = recursive_infer(
@@ -696,15 +708,15 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                         task_type="code",
                         user_message=user_message,
                         max_depth=_depth,
-                        extra_stop=["</tool>"],
+                        extra_stop=_stop,
                         stream=True,
                     )
             except Exception:
                 # Recursive inference unavailable — fall back to plain infer
                 response = infer(messages, stream=True,
-                                 extra_stop=["</tool>"], show_thinking=True)
+                                 extra_stop=_stop, show_thinking=True)
         else:
-            response = infer(messages, stream=True, extra_stop=["</tool>"], show_thinking=True)
+            response = infer(messages, stream=True, extra_stop=_stop, show_thinking=True)
         response = clean_response(response)
         tool_dict = parse_tool_call(response)
         if tool_dict:
@@ -809,7 +821,6 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             messages.append({"role": "assistant", "content": response})
             messages.append({"role": "user", "content": "You must call " + " and ".join(missing) + ".\nOutput ONLY a tool call:\n" + tool_hint})
             continue
-        separator()
         history.append({"role": "user",     "content": user_message})
         history.append({"role": "assistant", "content": response})
         if not _in_subtask:

@@ -7,7 +7,7 @@ sys.path.insert(0, str(Path(__file__).parent))
 from utils.logger import console, info, success, error, warning, separator
 from utils.config import CODEY_VERSION
 from core.loader_v2 import get_loader
-from core.inference_v2 import infer
+from core.inference_v2 import infer, was_last_streamed
 from core.agent import run_agent
 from core import context as ctx
 from core.sysmon import get_monitor
@@ -47,10 +47,10 @@ def parse_args():
     parser.add_argument("--finetune",   action="store_true", help="Export fine-tuning dataset and generate Colab notebook")
     parser.add_argument("--ft-days",    type=int, default=30, help="Days of history to include (default: 30)")
     parser.add_argument("--ft-quality", type=float, default=0.7, help="Min quality threshold 0.0-1.0 (default: 0.7)")
-    parser.add_argument("--ft-model",   choices=["1.5b", "7b", "both"], default="both", help="Model variant for fine-tuning")
+    parser.add_argument("--ft-model",   choices=["7b"], default="7b", help="Model variant for fine-tuning")
     parser.add_argument("--ft-output",  type=str, help="Output directory (default: ~/Downloads/codey-finetune)")
     parser.add_argument("--import-lora", metavar="PATH", help="Import LoRA adapter from path")
-    parser.add_argument("--lora-model", choices=["primary", "secondary"], default="primary", help="Model for LoRA import")
+    parser.add_argument("--lora-model", choices=["primary"], default="primary", help="Model for LoRA import")
     parser.add_argument("--lora-quant", type=str, default="q4_0", help="Quantization for merged model")
     parser.add_argument("--lora-merge", action="store_true", help="Merge LoRA on-device (requires llama.cpp)")
     return parser.parse_args()
@@ -88,7 +88,7 @@ def shutdown():
         get_loader().unload()
     except Exception:
         pass
-    # SIGKILL any remaining llama-server (SIGSTOP'd processes ignore SIGTERM)
+    # SIGKILL any remaining llama-server
     try:
         import subprocess
         subprocess.run(["pkill", "-9", "-f", "llama-server"], capture_output=True, timeout=5)
@@ -828,9 +828,12 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
             response, history = run_agent(initial_prompt, history, yolo=yolo, no_plan=no_plan)
             # Display the response for one-shot mode
             if response and not response.startswith("["):
-                separator()
-                console.print(f"\n[bold green]Codey-v2:[/bold green] {response}")
-                separator()
+                if was_last_streamed():
+                    separator()
+                else:
+                    separator()
+                    console.print(f"\n[bold green]Codey-v2:[/bold green] {response}")
+                    separator()
             save_session(history)
         except KeyboardInterrupt:
             pass
@@ -846,17 +849,17 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
             response, history = run_agent(initial_prompt, history, yolo=yolo, use_plan=plan, no_plan=no_plan)
             # Display the response
             if response and not response.startswith("["):
-                separator()
-                console.print(f"\n[bold green]Codey-v2:[/bold green] {response}")
-                separator()
+                if was_last_streamed():
+                    separator()
+                else:
+                    separator()
+                    console.print(f"\n[bold green]Codey-v2:[/bold green] {response}")
+                    separator()
             save_session(history)
         except KeyboardInterrupt:
             console.print("\n[dim]Interrupted.[/dim]")
 
     while True:
-        # ── Stats bar above each prompt ────────────────────────────────────
-        console.print(monitor.render())
-
         loaded = ctx.list_loaded()
         suffix = f" [bold dim]({len(loaded)} file{'s' if len(loaded)!=1 else ''})[/bold dim]" if loaded else ""
         try:
@@ -890,6 +893,9 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
             except Exception:
                 continue
 
+        # ── Stats bar after input ──────────────────────────────────────────
+        console.print(monitor.render())
+
         was_cmd, history = handle_command(user_input, history, yolo=yolo)
         if was_cmd:
             continue
@@ -898,9 +904,12 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
             response, history = run_agent(user_input, history, yolo=yolo, use_plan=plan, no_plan=no_plan)
             # Display the response if it's not a tool execution result
             if response and not response.startswith("["):
-                separator()
-                console.print(f"\n[bold green]Codey-v2:[/bold green] {response}")
-                separator()
+                if was_last_streamed():
+                    separator()
+                else:
+                    separator()
+                    console.print(f"\n[bold green]Codey-v2:[/bold green] {response}")
+                    separator()
                 # Speak the response if voice mode is on (Ctrl+C to interrupt)
                 try:
                     from core.voice import get_voice as _get_voice

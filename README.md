@@ -4,7 +4,7 @@
 
 **A persistent, daemon-like AI agent that lives on your device.**
 
-Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-based CLI tool into a continuous AI agent—maintaining state, managing background tasks, and adapting to work without constant supervision. All while running locally on your Android device with dual-model hot-swap for thermal and memory efficiency.
+Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-based CLI tool into a continuous AI agent—maintaining state, managing background tasks, and adapting to work without constant supervision. All while running locally on your Android device using Qwen2.5-Coder-7B.
 
 ```
   ██████╗ ██████╗ ██████╗ ███████╗██╗   ██╗
@@ -13,7 +13,7 @@ Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-ba
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-  v2.6.6 · Learning AI Agent · Termux
+  v2.6.9 · Learning AI Agent · Termux
 ```
 
 ---
@@ -218,11 +218,9 @@ Codey-v2 is a **persistent, autonomous coding agent** that runs as a background 
 - **Long-term Memory**: Embeddings for semantic search
 - **Episodic Memory**: Complete action history
 
-### ⚡ Dual-Model Hot-Swap
-- **Primary**: Qwen2.5-Coder-7B for complex tasks
-- **Secondary**: Qwen2.5-1.5B for simple queries
-- Automatic routing based on input complexity
-- **LRU Cache**: SIGSTOP/SIGCONT for quick restart (reduces 2-3s swap delay)
+### ⚡ Single-Model Architecture (v2.6.9)
+- **Qwen2.5-Coder-7B**: One model handles all tasks — no routing overhead
+- Simplified startup: no secondary model required
 
 ### 📋 Internal Planning
 - Native task queue with dependency tracking

@@ -15,7 +15,6 @@ from typing import Optional, Dict, Any
 from utils.logger import info, error, warning, success
 from utils.config import MODEL_CONFIG
 from core.loader_v2 import get_loader
-from core.router import get_router
 from rich.console import Console
 import sys
 
@@ -25,6 +24,14 @@ last_tps = 0.0
 
 # Chat completions backend (v2.6.0)
 _chat_backend = None
+
+# Set to True after a streaming inference so callers can skip re-printing
+_last_was_streamed = False
+
+
+def was_last_streamed() -> bool:
+    """Return True if the most recent infer() call used live streaming."""
+    return _last_was_streamed
 
 
 def _get_chat_backend():
@@ -51,7 +58,7 @@ def infer(messages: list[dict], stream: bool = False, extra_stop: list = None,
         messages: Chat messages [{"role": "system"/"user"/"assistant", "content": "..."}]
         stream: Enable streaming (reserved for future use)
         extra_stop: Additional stop sequences
-        model: Force specific model ("primary" or "secondary")
+        model: Ignored (single-model mode — always uses primary 7B)
         show_thinking: Show thinking indicator
         use_hybrid: Use chat completions backend (default True)
 
@@ -60,42 +67,28 @@ def infer(messages: list[dict], stream: bool = False, extra_stop: list = None,
     """
     global last_tps
 
-    # Ensure model is loaded via loader
+    # Ensure model is loaded
     loader = get_loader()
-    if model is None:
-        user_input = ""
-        for msg in messages:
-            if msg.get("role") == "user":
-                user_input = msg.get("content", "")
-                break
-        model = get_router().route_task(user_input)
-        info(f"Auto-routed to {model} model")
-
-    start = time.time()
-    if not loader.ensure_model(model):
-        return f"[ERROR] Failed to load {model} model"
-
-    load_time = time.time() - start
-    if load_time > 1:
-        info(f"Model swap took {load_time:.1f}s")
+    if not loader.ensure_model():
+        return "[ERROR] Failed to load model"
 
     # Try chat completions backend (v2.6.0)
     if use_hybrid:
         backend = _get_chat_backend()
         if backend and backend != "http_fallback":
             try:
-                return _infer_chat(backend, messages, extra_stop, show_thinking)
+                return _infer_chat(backend, messages, extra_stop, show_thinking, stream)
             except Exception as e:
                 warning(f"Chat completions failed: {e}, falling back to HTTP")
 
     # Legacy HTTP fallback
-    return _infer_http(messages, stream, extra_stop, model, show_thinking)
+    return _infer_http(messages, stream, extra_stop, show_thinking)
 
 
 def _infer_chat(backend, messages: list[dict], extra_stop: list,
-                show_thinking: bool) -> str:
+                show_thinking: bool, stream: bool = False) -> str:
     """Run inference via /v1/chat/completions — proper ChatML."""
-    global last_tps
+    global last_tps, _last_was_streamed
 
     # Build stop tokens
     stop = list(MODEL_CONFIG.get("stop", []))
@@ -106,32 +99,33 @@ def _infer_chat(backend, messages: list[dict], extra_stop: list,
         console.print("[dim]\u2901 Thinking...[/dim]")
 
     start = time.time()
-    result = backend.infer(messages, max_tokens=MODEL_CONFIG.get("max_tokens", 2048), stop=stop)
+    result = backend.infer(messages, max_tokens=MODEL_CONFIG.get("max_tokens", 2048),
+                           stop=stop, stream=stream)
 
     if result is None:
+        _last_was_streamed = False
         return "[ERROR] Chat completions inference failed"
 
     # result is (text, tokens, tps) tuple
     text, tokens, tps = result
     elapsed = time.time() - start
     last_tps = tps
+    _last_was_streamed = stream
 
-    if show_thinking:
+    # When streaming, tokens were already printed live — skip the "Done" line
+    # to avoid cluttering the output. For blocking mode, show the summary.
+    if show_thinking and not stream:
         bname = backend.backend_name
         console.print(f"[dim]\u2713 Done ({bname}): {tokens} tokens in {elapsed:.1f}s ({tps:.1f} t/s)[/dim]")
-
-    info(f"Inference ({backend.backend_name}): {tokens} tokens in {elapsed:.1f}s ({tps:.1f} t/s)")
 
     return text
 
 
 def _infer_http(messages: list[dict], stream: bool, extra_stop: list,
-                model: str, show_thinking: bool) -> str:
+                show_thinking: bool) -> str:
     """Run inference using legacy HTTP backend (inference.py on port 8081)."""
     global last_tps
 
-    # The legacy backend uses /v1/chat/completions with proper messages
-    # so it also applies ChatML correctly.
     from core.inference import infer as legacy_infer
 
     if show_thinking:
@@ -153,11 +147,9 @@ def _infer_http(messages: list[dict], stream: bool, extra_stop: list,
 def get_model_status() -> dict:
     """Get current model status."""
     loader = get_loader()
-    router = get_router()
 
     status = {
         "loaded": loader.get_loaded_model(),
-        "router": router.get_status(),
         "loader": loader.get_status(),
     }
 

@@ -7,6 +7,39 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [2.6.9] - 2026-03-17
+
+### Removed — Single-Model Architecture
+
+Removed the dual-model hot-swap system. Codey-v2 now runs exclusively on the
+primary Qwen2.5-Coder-7B model. The router and secondary model added complexity
+(SIGSTOP/SIGCONT caching, routing heuristics, cooldown logic) that caused subtle
+failures (e.g. the 1.5B model timing out on tasks it couldn't handle) with
+minimal practical benefit — the 7B model handles all tasks including short
+conversational exchanges.
+
+#### Removed
+
+- `core/router.py` — `ModelRouter` class and `route_task()` routing logic
+  (replaced with tombstone file)
+- `utils/config.py` — `SECONDARY_MODEL_PATH` and `ROUTER_CONFIG` config keys
+- `core/loader_v2.py` — `load_secondary()`, SIGSTOP/SIGCONT pause-based caching
+  (`_stopped_servers` dict), and all hot-swap unload/resume logic
+- `core/inference_v2.py` — `get_router()` import and auto-routing; the `model`
+  parameter is now a no-op (always uses primary)
+- `main.py` — `--ft-model` no longer offers `"1.5b"` / `"both"` choices;
+  `--lora-model` no longer offers `"secondary"` choice
+
+#### Changed
+
+- `core/loader_v2.py` — `ModelLoader` simplified: single model, `unload()` now
+  calls `stop()` directly instead of SIGSTOP; no stopped-server cache
+- `core/inference_v2.py` — removed router dependency; always calls
+  `loader.ensure_model()` with no model-type argument
+- `utils/config.py` — version bumped: `2.6.8` → `2.6.9`
+
+---
+
 ## [2.6.6] - 2026-03-17
 
 ### Added — Phase 6: Dedicated Embedding Server (Option C)
@@ -542,6 +575,7 @@ The following features are explicitly out of scope for v2.0.0 but may be conside
 
 | Version | Python | Termux | llama.cpp | Models |
 |---------|--------|--------|-----------|--------|
+| 2.6.9 | 3.12+ | Latest | Latest stable | Qwen2.5-Coder-7B |
 | 2.0.0 | 3.12+ | Latest | Latest stable | Qwen2.5-7B, Qwen2.5-1.5B |
 | 1.0.0 | 3.10+ | Latest | Latest stable | Qwen2.5-Coder-7B |
 
