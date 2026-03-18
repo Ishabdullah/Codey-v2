@@ -858,6 +858,12 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                 auto_retries += 1
                 warning("Error detected — auto-retry " + str(auto_retries) + "/" + str(max_retries))
                 messages.append({"role": "assistant", "content": _format_tool_for_history(tool_dict)})
+                # If shell was blocked and user wants a file created, redirect to write_file
+                if name == "shell" and "Command blocked" in last_tool_result:
+                    _file_words = ["create", "write", "make", "build", "file", ".py", ".js", ".html", ".txt", ".md"]
+                    if any(w in msg_low for w in _file_words):
+                        messages.append({"role": "user", "content": "Error: shell commands are blocked. Use the write_file tool instead to create the file. Output ONLY a <tool> block with write_file."})
+                        continue
                 messages.append({"role": "user", "content": "Error:\n" + last_tool_result[:400] + "\n\nFix the error and try again."})
                 continue
             elif is_error(last_tool_result, name) and auto_retries >= max_retries and not _in_subtask:
