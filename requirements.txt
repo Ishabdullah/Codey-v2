@@ -11,5 +11,5 @@ numpy>=1.24.0
 # Phase 5: Background Execution
 watchdog>=3.0.0
 
-# Phase 6: Observability
-psutil>=5.9.0
+# Phase 6: Observability (optional — sysmon.py falls back to /proc/ on Android)
+# psutil>=5.9.0  # Skip on Termux/Android — wheel fails to build, not needed
