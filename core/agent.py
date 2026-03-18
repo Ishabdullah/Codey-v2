@@ -892,9 +892,18 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                     continue
                 # else: user skipped escalation, fall through to normal handling
             messages.append({"role": "assistant", "content": _format_tool_for_history(tool_dict)})
-            # After write_file for a simple create request, tell model to wrap up
-            if name == "write_file" and not any(k in user_message.lower() for k in ["run", "execute", "test"]):
-                messages.append({"role": "user", "content": "Tool result: " + last_tool_result[:500] + "\nFile created. Confirm in 1 sentence. Do NOT run any commands."})
+            # After write_file for a simple create request — force exit the loop.
+            # The 7B model ignores "don't run commands" instructions and keeps
+            # calling read_file/shell, so we must hard-stop here.
+            if name == "write_file" and not any(k in user_message.lower() for k in ["run", "execute", "test", "start", "launch"]):
+                _written_path = args.get("path", "the file")
+                _confirm = f"Created {_written_path}"
+                separator()
+                print("\033[1;32mCodey:\033[0m " + _confirm)
+                separator()
+                history.append({"role": "user",      "content": user_message})
+                history.append({"role": "assistant",  "content": _confirm})
+                return _confirm, history
             else:
                 messages.append({"role": "user", "content": "Tool result: " + last_tool_result[:500] + "\nNext action or final answer:"})
             continue
