@@ -64,8 +64,8 @@ def save_session(history: list, project_dir: str = None, max_turns: int = 6):
     except Exception as e:
         warning(f"Could not save session: {e}")
 
-def load_session(project_dir: str = None, path: str = None) -> list:
-    """Load conversation history from disk. Returns empty list if none."""
+def load_session(project_dir: str = None, path: str = None, max_age_hours: int = 2) -> list:
+    """Load conversation history from disk. Returns empty list if stale or missing."""
     if path:
         path = Path(path)
     else:
@@ -74,8 +74,20 @@ def load_session(project_dir: str = None, path: str = None) -> list:
         return []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
+        # Skip stale sessions — old context causes the model to
+        # repeat previous responses instead of following new instructions
+        saved_at_str = data.get("saved_at", "")
+        if saved_at_str:
+            try:
+                saved_at_dt = datetime.fromisoformat(saved_at_str)
+                age_hours = (datetime.now() - saved_at_dt).total_seconds() / 3600
+                if age_hours > max_age_hours:
+                    info(f"Session expired ({age_hours:.0f}h old). Starting fresh.")
+                    return []
+            except (ValueError, TypeError):
+                pass
         history = data.get("history", [])
-        saved_at = data.get("saved_at", "unknown")[:16].replace("T", " ")
+        saved_at = saved_at_str[:16].replace("T", " ") if saved_at_str else "unknown"
         turns = data.get("turns", len(history) // 2)
         info(f"Resumed session: {turns} turns from {saved_at}")
         return history

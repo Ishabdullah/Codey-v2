@@ -162,6 +162,13 @@ class ChatCompletionBackend:
         # Use try/finally instead of `with` — urllib's context manager tries to
         # read remaining data on exit, which blocks if the server is still sending.
         response = urllib.request.urlopen(req, timeout=300)
+        # Set a per-read timeout on the socket — if no data arrives for 15s
+        # after the last token, break out. Without this, the loop blocks up
+        # to 300s when llama-server hits a stop sequence but doesn't send [DONE].
+        try:
+            response.fp._sock.settimeout(15)
+        except Exception:
+            pass
         try:
             for raw_line in response:
                 line = raw_line.decode('utf-8').rstrip('\n\r')
@@ -223,6 +230,10 @@ class ChatCompletionBackend:
 
                 except (json.JSONDecodeError, KeyError):
                     pass
+        except socket.timeout:
+            # Read timeout — server stopped sending (hit stop sequence
+            # but didn't send [DONE]). This is normal, not an error.
+            pass
         finally:
             # Force-close the socket immediately — don't let urllib
             # try to drain remaining bytes (causes the hang).
