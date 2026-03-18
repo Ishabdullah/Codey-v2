@@ -48,28 +48,36 @@ def is_complex(message):
     msg = message.lower()
 
     # Action keywords that indicate a task (not a question)
+    # Keep in sync with _action_kws in core/agent.py
     _action_kws = [
         "create", "write", "make", "build", "edit", "fix", "run", "execute",
         "install", "add", "delete", "remove", "update", "patch", "refactor",
-        "implement", "generate", "rewrite",
+        "implement", "generate", "rewrite", "deploy", "setup", "configure",
         "review", "analyze", "analyse", "audit", "examine", "inspect", "assess",
         "read", "look at", "show me", "check",
+        "replace", "rename", "swap", "convert", "change", "append", "insert",
+        "move", "copy", "print", "output", "display", "open",
+        "remember", "don't forget", "forget",
+        "ask gemini", "ask claude", "call gemini", "call claude",
     ]
-    _has_action = any(k in msg for k in _action_kws)
-    
+    _has_action = any(re.search(r'\b' + re.escape(k) + r'\b', msg) for k in _action_kws)
+
     # Question starters that indicate Q&A (not a task)
     _question_starters = (
         "what", "why", "how", "when", "where", "who", "which",
         "is ", "are ", "do ", "does ", "can ", "could ", "would ",
         "should ", "will ", "was ", "were ", "has ", "have ",
     )
-    _qa_phrases = ["tell me", "explain", "help me understand", "what can you"]
-    
+    _qa_phrases = [
+        "tell me", "tell me about", "explain", "help me understand",
+        "what can you", "hello", "hi", "hey", "thanks", "thank you",
+    ]
+
     # If no action keyword AND looks like a question, NOT complex
     if not _has_action and (
         msg.endswith("?") or
         msg.startswith(_question_starters) or
-        any(k in msg for k in _qa_phrases)
+        any(re.search(r'\b' + re.escape(k) + r'\b', msg) for k in _qa_phrases)
     ):
         return False
     
@@ -105,7 +113,7 @@ def parse_task_list(model_output):
 
 
 # Filename extraction pattern
-_FILE_RE = re.compile(r'\b(\w+\.(?:py|js|ts|html|css|json|yaml|yml|toml|txt|md|sh))\b')
+_FILE_RE = re.compile(r'\b([\w][\w\-]*\.(?:py|js|ts|html|css|json|yaml|yml|toml|txt|md|sh))\b')
 
 
 def _postprocess_plan(tasks):

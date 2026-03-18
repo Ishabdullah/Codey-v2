@@ -93,7 +93,9 @@ def extract_json(raw):
     raw = raw.strip()
 
     # Fix Python triple-quotes → JSON strings (common 7B model error)
-    # Replace """...""" with "..." (escaping inner quotes and newlines)
+    # The model writes """content""" with Python-style escapes inside.
+    # Step 1: decode Python escapes (\n → newline, \" → quote)
+    # Step 2: re-encode for JSON (newline → \n, quote → \")
     def _fix_triple_quotes(s):
         result = []
         i = 0
@@ -102,16 +104,20 @@ def extract_json(raw):
                 # Find closing triple-quote
                 end = s.find('"""', i + 3)
                 if end == -1:
-                    # No closing triple-quote — take rest of string
                     inner = s[i+3:]
                     i = len(s)
                 else:
                     inner = s[i+3:end]
                     i = end + 3
-                # Escape for JSON: backslashes, quotes, newlines
+                # Step 1: decode Python escapes to actual characters
+                inner = inner.replace('\\"', '"')
+                inner = inner.replace('\\n', '\n')
+                inner = inner.replace('\\t', '\t')
+                # Step 2: re-encode for JSON
                 inner = inner.replace('\\', '\\\\')
                 inner = inner.replace('"', '\\"')
                 inner = inner.replace('\n', '\\n')
+                inner = inner.replace('\t', '\\t')
                 result.append('"' + inner + '"')
             else:
                 result.append(s[i])
@@ -740,7 +746,7 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
     while step < max_steps:
         step += 1
         used, total = get_context_usage(messages)
-        pct = used / total
+        pct = used / total if total > 0 else 0.0
         if pct > 0.85:
             warning("Context: " + usage_bar(used, total))
         else:
@@ -872,7 +878,11 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                     continue
                 # else: user skipped escalation, fall through to normal handling
             messages.append({"role": "assistant", "content": _format_tool_for_history(tool_dict)})
-            messages.append({"role": "user", "content": "Tool result: " + last_tool_result[:500] + "\nNext action or final answer:"})
+            # After write_file for a simple create request, tell model to wrap up
+            if name == "write_file" and not any(k in user_message.lower() for k in ["run", "execute", "test"]):
+                messages.append({"role": "user", "content": "Tool result: " + last_tool_result[:500] + "\nFile created. Confirm in 1 sentence. Do NOT run any commands."})
+            else:
+                messages.append({"role": "user", "content": "Tool result: " + last_tool_result[:500] + "\nNext action or final answer:"})
             continue
         false_file, false_run = is_hallucination(response, user_message, tools_used)
         if (false_file or false_run) and hallucination_count == 0:
