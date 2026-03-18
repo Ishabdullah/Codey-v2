@@ -40,7 +40,7 @@ Usage:
 import re
 from typing import Optional
 
-from utils.config import RECURSIVE_CONFIG
+from utils.config import RECURSIVE_CONFIG, THERMAL_CONFIG
 from prompts.layered_prompt import build_recursive_prompt
 from utils.logger import info, warning
 
@@ -102,6 +102,63 @@ def classify_breadth_need(user_message: str) -> str:
         return "deep"
 
     return "standard"
+
+
+# ── Adaptive depth (Phase 8) ────────────────────────────────────────────────
+
+def get_adaptive_depth(requested_depth: int) -> int:
+    """
+    Adjust recursion depth based on device thermal and battery state.
+
+    Rules (applied in priority order):
+    - temp >= temp_critical (80°C)  → force depth 0 (no recursion)
+    - temp >= temp_warn (65°C)      → cap depth at 1
+    - battery <= batt_low (15%) AND not charging → cap depth at 1
+    - battery <= batt_critical (5%) AND not charging → force depth 0
+    - charging or cool                → use requested_depth as-is
+
+    Returns the (possibly reduced) max_depth.
+    """
+    if not THERMAL_CONFIG.get("enabled", True):
+        return requested_depth
+
+    cfg = THERMAL_CONFIG
+    temp_crit = cfg.get("temp_critical", 80)
+    temp_warn = cfg.get("temp_warn", 65)
+    batt_low  = cfg.get("batt_low", 15)
+    batt_crit = cfg.get("batt_critical", 5)
+
+    try:
+        from core.sysmon import get_monitor
+        snap = get_monitor().snapshot
+    except Exception:
+        return requested_depth  # monitor unavailable — use full depth
+
+    temp = snap.get("temp")
+    batt = snap.get("battery_pct")
+    charging = snap.get("battery_charging", False)
+
+    # Temperature takes priority — thermal throttling makes recursion pointless
+    if temp is not None:
+        if temp >= temp_crit:
+            if requested_depth > 0:
+                info(f"[Adaptive] {temp:.0f}°C — skipping recursion (thermal)")
+            return 0
+        if temp >= temp_warn and requested_depth > 1:
+            info(f"[Adaptive] {temp:.0f}°C — capping recursion depth to 1")
+            return 1
+
+    # Battery — only restrict when NOT charging
+    if batt is not None and not charging:
+        if batt <= batt_crit:
+            if requested_depth > 0:
+                info(f"[Adaptive] Battery {batt}% — skipping recursion")
+            return 0
+        if batt <= batt_low and requested_depth > 1:
+            info(f"[Adaptive] Battery {batt}% — capping recursion depth to 1")
+            return 1
+
+    return requested_depth
 
 
 # ── Quality gate helpers ──────────────────────────────────────────────────────
@@ -216,6 +273,9 @@ def recursive_infer(
         quality_threshold = cfg.get("quality_threshold", 0.7)
     if extra_stop is None:
         extra_stop = ["</tool>"]
+
+    # Phase 8: Adapt depth to thermal/battery state
+    max_depth = get_adaptive_depth(max_depth)
 
     # ── Step 1: Generate initial draft ────────────────────────────────────────
     try:

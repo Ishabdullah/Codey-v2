@@ -10,6 +10,8 @@ No psutil required — reads /proc/stat, /proc/meminfo, and
 psutil is used when installed for slightly more accurate CPU%.
 """
 
+import json
+import subprocess
 import sys
 import time
 import threading
@@ -32,8 +34,11 @@ class SystemMonitor:
         self._ram_used: int = 0
         self._ram_total: int = 0
         self._temp: Optional[float] = None
+        self._battery_pct: Optional[int] = None
+        self._battery_charging: bool = False
         self._running = False
         self._thread: Optional[threading.Thread] = None
+        self._battery_tick: int = 0  # read battery every N loops (slow cmd)
 
         # For /proc/stat delta CPU calculation
         self._prev_idle: int = 0
@@ -58,10 +63,12 @@ class SystemMonitor:
     def snapshot(self) -> dict:
         with self._lock:
             return {
-                "cpu":       self._cpu,
-                "ram_used":  self._ram_used,
-                "ram_total": self._ram_total,
-                "temp":      self._temp,
+                "cpu":              self._cpu,
+                "ram_used":         self._ram_used,
+                "ram_total":        self._ram_total,
+                "temp":             self._temp,
+                "battery_pct":      self._battery_pct,
+                "battery_charging": self._battery_charging,
             }
 
     def render(self) -> Text:
@@ -117,6 +124,14 @@ class SystemMonitor:
         cpu    = self._read_cpu()
         ru, rt = self._read_ram()
         temp   = self._read_temp()
+        # Battery is slow (~200ms subprocess) — read every 5th tick (~10s)
+        self._battery_tick += 1
+        if self._battery_tick >= 5:
+            self._battery_tick = 0
+            bpct, bcharging = self._read_battery()
+            with self._lock:
+                self._battery_pct = bpct
+                self._battery_charging = bcharging
         with self._lock:
             self._cpu       = cpu
             self._ram_used  = ru
@@ -234,6 +249,40 @@ class SystemMonitor:
         except Exception:
             pass
         return best
+
+    def _read_battery(self) -> Tuple[Optional[int], bool]:
+        """
+        Read battery percentage and charging state.
+
+        Tries (in order):
+        1. /sys/class/power_supply/battery/ (fast, no subprocess)
+        2. termux-battery-status (Termux API, ~200ms subprocess)
+
+        Returns (percentage or None, is_charging).
+        """
+        # Fast path: sysfs
+        try:
+            batt = Path("/sys/class/power_supply/battery")
+            if batt.exists():
+                pct = int((batt / "capacity").read_text().strip())
+                status = (batt / "status").read_text().strip().lower()
+                return pct, status in ("charging", "full")
+        except Exception:
+            pass
+        # Fallback: termux-battery-status (JSON output)
+        try:
+            out = subprocess.run(
+                ["termux-battery-status"],
+                capture_output=True, text=True, timeout=2,
+            )
+            if out.returncode == 0 and out.stdout.strip():
+                data = json.loads(out.stdout)
+                pct = data.get("percentage")
+                status = data.get("status", "").lower()
+                return pct, status in ("charging", "full")
+        except Exception:
+            pass
+        return None, False
 
 
 # ── helpers ───────────────────────────────────────────────────────────────────

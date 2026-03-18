@@ -63,13 +63,18 @@ AGENT_CONFIG = {
     "history_turns":  3,
 }
 
-# Thermal management - Phase 7
+# Thermal management + adaptive depth — Phase 8 (v2.6.8)
 THERMAL_CONFIG = {
     "enabled": True,
     "warn_after_sec": 300,       # 5 minutes - log warning
     "reduce_threads_after_sec": 600,  # 10 minutes - reduce to 2 threads
     "min_threads": 2,
     "original_threads": 6,       # Will be set from MODEL_CONFIG
+    # Adaptive recursion depth thresholds
+    "temp_critical": 80,         # °C — skip recursion entirely
+    "temp_warn":     65,         # °C — cap recursion depth to 1
+    "batt_critical":  5,         # % — skip recursion (not charging)
+    "batt_low":      15,         # % — cap recursion depth to 1 (not charging)
 }
 
 # Initialize original_threads from MODEL_CONFIG
@@ -112,5 +117,5 @@ RETRIEVAL_CONFIG = {
     "semantic_threshold": 0.3,          # minimum cosine similarity for semantic results
 }
 
-CODEY_VERSION = "2.6.6"
+CODEY_VERSION = "2.6.8"
 CODEY_NAME    = "Codey-v2"
