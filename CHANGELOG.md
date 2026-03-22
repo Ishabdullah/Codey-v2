@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.6.10] - 2026-03-18
+### Added
+- Advanced context management (better token efficiency, phase-aware handling)
+- Anti-babbling / self-awareness mechanisms (prevents repetitive or off-track loops)
+- Stronger persistent memory across sessions
+
+### Fixed
+- Streaming response hangs
+- Code leakage in agent outputs
+- Session staleness issues
+
+
+
 ## [2.6.9] - 2026-03-17
 
 ### Removed — Single-Model Architecture
@@ -39,6 +52,17 @@ conversational exchanges.
 - `utils/config.py` — version bumped: `2.6.8` → `2.6.9`
 
 ---
+
+## [v2.6.8] - 2026-03-17
+### Added
+- Adaptive planning depth
+- Thermal awareness (better mobile/daemon throttling)
+
+## [v2.6.7] - 2026-03-17
+### Changed
+- General cleanup and simplification (Phase 7)
+
+
 
 ## [2.6.6] - 2026-03-17
 
