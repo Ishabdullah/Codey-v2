@@ -112,22 +112,62 @@ class DaemonServer:
         return {"status": "ok", "message": "pong"}
     
     async def _handle_command(self, data: Dict) -> Dict:
-        """Handle a user command (prompt)."""
+        """Handle a user command (prompt).
+
+        If plannd is available and no_plan is not set, the raw prompt is sent to
+        plannd (DeepSeek 1.5B) which returns a numbered step list.  Each step is
+        added as a dependent task via Planner.add_tasks() so the 7B model works
+        through them one at a time.
+
+        If plannd is unavailable, times out (>45 s), or returns fewer than 2 steps,
+        the prompt is queued as a single direct task — identical to prior behaviour.
+        Plannd failure is always silent (logged only) and never surfaces as an error.
+        """
         prompt = data.get("prompt", "")
         if not prompt:
             return {"status": "error", "message": "No prompt provided"}
-        
+
         # Log to episodic log
         self.state.log_action("command_received", prompt[:200])
-        
-        # Add to task queue
+
+        # ── plannd integration (Change 1) ────────────────────────────────────
+        no_plan = data.get("no_plan", False)
+        if not no_plan:
+            try:
+                from core.planner_client import send_plan_request_async
+                steps = await asyncio.wait_for(
+                    send_plan_request_async(prompt),
+                    timeout=45.0,
+                )
+                if steps and len(steps) > 1:
+                    task_ids = [] if data.get("plan_only", False) else self.planner.add_tasks(steps)
+                    if data.get("plan_only"):
+                        info(f"plannd: returned {len(steps)}-step plan (plan_only)")
+                    else:
+                        info(f"plannd: queued {len(steps)}-step plan")
+                    return {
+                        "status": "ok",
+                        "message": f"Plan created: {len(steps)} steps",
+                        "task_ids": task_ids,
+                        "plan": steps,
+                    }
+                # plannd returned ≤1 step — fall through to single-task path
+                if steps:
+                    info("plannd returned only 1 step — using single-task path")
+            except asyncio.TimeoutError:
+                warning("plannd request timed out after 45 s — falling back to direct task")
+            except ConnectionRefusedError:
+                # plannd not running — silent fallback
+                pass
+            except Exception as _e:
+                warning(f"plannd unavailable ({_e}) — falling back to direct task")
+
+        # ── Fallback: single direct task (existing behaviour) ────────────────
         task_id = self.state.add_task(prompt)
-        
-        # For now, just acknowledge (actual execution would happen in background)
         return {
             "status": "ok",
             "message": f"Task queued with ID {task_id}",
-            "task_id": task_id
+            "task_id": task_id,
         }
     
     async def _handle_status(self, data: Dict) -> Dict:
@@ -567,7 +607,7 @@ def send_command(cmd: str, data: Dict = None) -> Dict:
         raise ConnectionError("Daemon socket not found. Is the daemon running?")
 
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(30.0)
+    sock.settimeout(60.0)
 
     try:
         sock.connect(str(SOCKET_FILE))

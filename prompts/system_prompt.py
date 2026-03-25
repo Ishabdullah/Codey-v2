@@ -97,3 +97,10 @@ GUIDANCE_SQLITE = """SQLite databases:
 - NEVER create .db files with write_file. sqlite3.connect() creates them automatically.
 - Use `with conn:` for atomic transactions.
 - Open connection per-request, not globally."""
+
+GUIDANCE_PERSISTENCE = """When building CLI tools that track data (expenses, logs, tasks, notes, budgets, records):
+- ALWAYS save data to a JSON or SQLite file so it persists between runs.
+- For JSON: load at startup with json.load() (handle FileNotFoundError), save after every mutation with json.dump().
+- For SQLite: use sqlite3.connect() + CREATE TABLE IF NOT EXISTS.
+- NEVER store data only in a Python list — it resets to empty every run.
+- Default file: use a fixed name like 'expenses.json' or 'tracker.db' in the working directory."""

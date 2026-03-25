@@ -132,6 +132,68 @@ def run_init():
     path = write_codeymd(content)
     success(f"CODEY.md written to {path}") if not path.startswith("[ERROR]") else error(path)
 
+def _try_daemon_plan(prompt: str, no_plan: bool = False):
+    """
+    If the daemon is running, send the prompt through its Unix socket so that
+    _handle_command is called and plannd (DeepSeek 1.5B) gets a chance to produce
+    a numbered plan.
+
+    Returns the list of step strings on success, or None so the caller falls back
+    to direct run_agent() — identical to pre-plannd behaviour.
+
+    Failure modes handled silently:
+      - Daemon not running         → None
+      - plannd not yet loaded      → None (no "plan" key in response)
+      - Socket timeout (60 s)      → None
+      - Any exception              → None
+    """
+    if no_plan:
+        return None
+    try:
+        from core.daemon import is_daemon_running, send_command
+        if not is_daemon_running():
+            return None
+        response = send_command("command", {"prompt": prompt, "no_plan": False, "plan_only": True})
+        plan = response.get("plan")
+        if plan and isinstance(plan, list) and len(plan) > 1:
+            return plan
+    except Exception:
+        pass  # daemon unavailable, plannd not ready, or timed out → fall through
+    return None
+
+
+def _run_with_plan(prompt: str, history: list, yolo: bool, use_plan: bool, no_plan: bool):
+    """
+    Execute a user prompt, routing through the daemon for planning when available.
+
+    If the daemon is running and plannd returns a plan:
+      1. Print the numbered plan from DeepSeek before any execution begins.
+      2. Run each step through run_agent() locally (7B model, visible in terminal).
+
+    Otherwise fall back to a direct run_agent() call — identical to existing behaviour.
+
+    Returns (response, updated_history) with the same contract as run_agent().
+    """
+    plan = _try_daemon_plan(prompt, no_plan)
+
+    if plan:
+        separator()
+        console.print("[bold cyan]Plan from DeepSeek:[/bold cyan]")
+        for i, step in enumerate(plan, 1):
+            console.print(f"  [bold cyan]{i}.[/bold cyan] {step}")
+        separator()
+
+        response = ""
+        for i, step in enumerate(plan, 1):
+            console.print(f"\n[dim]── Step {i}/{len(plan)}: {step}[/dim]")
+            step_resp, history = run_agent(step, history, yolo=yolo, no_plan=True)
+            response = step_resp or response
+        return response, history
+
+    # No plan available — run directly as before
+    return run_agent(prompt, history, yolo=yolo, use_plan=use_plan, no_plan=no_plan)
+
+
 def print_diff(diff_output: str):
     for line in diff_output.splitlines():
         if line.startswith("+") and not line.startswith("+++"):
@@ -727,7 +789,9 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
 
         # Pass the raw task — no wrapping needed for direct /peer calls
         output = mgr.call(cli, task)
-        if output and len(output.strip()) > 10:
+        if mgr.is_peer_error(output):
+            error(f"Peer {cli.name} failed: {output}")
+        elif output and len(output.strip()) > 10:
             summary = mgr.summarize_result(cli.name, output, task)
             history.append({"role": "user", "content": f"/peer {cli.name}: {task}"})
             history.append({"role": "assistant", "content": summary})
@@ -851,7 +915,7 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
 
     if initial_prompt and one_shot:
         try:
-            response, history = run_agent(initial_prompt, history, yolo=yolo, no_plan=no_plan)
+            response, history = _run_with_plan(initial_prompt, history, yolo, False, no_plan)
             # Display the response for one-shot mode
             if response and not response.startswith("["):
                 if was_last_streamed():
@@ -872,7 +936,7 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
 
     if initial_prompt:
         try:
-            response, history = run_agent(initial_prompt, history, yolo=yolo, use_plan=plan, no_plan=no_plan)
+            response, history = _run_with_plan(initial_prompt, history, yolo, plan, no_plan)
             # Display the response
             if response and not response.startswith("["):
                 if was_last_streamed():
@@ -893,6 +957,20 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
             # Rich's input conflicts with raw sys.stdout.write() used
             # during streaming, causing the REPL to hang after responses.
             user_input = input(f"\033[1;34mYou{file_hint}>\033[0m ").strip()
+            # Paste detection: terminal pastes arrive as multiple buffered lines.
+            # Drain any immediately-available continuation lines and join them
+            # so a multi-line paste is treated as one message, not many short ones.
+            try:
+                import select as _sel
+                _extra = []
+                while _sel.select([sys.stdin], [], [], 0.02)[0]:
+                    _line = sys.stdin.readline().rstrip('\n').strip()
+                    if _line:
+                        _extra.append(_line)
+                if _extra:
+                    user_input = user_input + ' ' + ' '.join(_extra)
+            except Exception:
+                pass  # select unavailable — proceed with single line
         except (KeyboardInterrupt, EOFError):
             save_session(history)
             print("\nSession saved. Goodbye!")
@@ -930,7 +1008,7 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
             continue
 
         try:
-            response, history = run_agent(user_input, history, yolo=yolo, use_plan=plan, no_plan=no_plan)
+            response, history = _run_with_plan(user_input, history, yolo, plan, no_plan)
             # Display the response if it's not a tool execution result
             if response and not response.startswith("["):
                 if was_last_streamed():

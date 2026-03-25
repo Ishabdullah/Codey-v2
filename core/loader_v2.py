@@ -78,6 +78,26 @@ class LlamaServer:
             for stop in MODEL_CONFIG.get("stop", []):
                 cmd.extend(["--reverse-prompt", stop])
 
+            # ── mmap / mlock settings for the 7B model (Change 2) ──────────
+            # Pass --mmap / --no-mmap explicitly in both directions so the flag
+            # is visible in ps output and not left to llama.cpp's default.
+            # --no-mlock does NOT exist in this llama.cpp build; omitting --mlock
+            # is sufficient to keep mlock disabled (the llama.cpp default).
+            try:
+                from utils.config import QWEN_7B_MMAP, QWEN_7B_MLOCK
+                if QWEN_7B_MMAP:
+                    cmd.append("--mmap")
+                else:
+                    cmd.append("--no-mmap")
+                if QWEN_7B_MLOCK:
+                    cmd.append("--mlock")
+                info(
+                    f"7B model: mmap={'enabled' if QWEN_7B_MMAP else 'disabled'}, "
+                    f"mlock={'enabled' if QWEN_7B_MLOCK else 'disabled'}"
+                )
+            except ImportError:
+                pass  # Config not available — use llama.cpp defaults (mmap on, mlock off)
+
             # Start process - redirect output to log file to avoid pipe buffer issues
             log_file = Path.home() / ".codey-v2" / "llama-server.log"
             log_file.parent.mkdir(parents=True, exist_ok=True)

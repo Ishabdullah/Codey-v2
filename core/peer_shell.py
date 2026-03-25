@@ -162,14 +162,77 @@ def run_peer(cli_name: str, cmd: str, prompt_text: str = "") -> str:
     return capture.getvalue()
 
 
+_PEER_ERROR_KEYWORDS = (
+    "rateLimitExceeded",
+    "RESOURCE_EXHAUSTED",
+    "No capacity available",
+    "Operation cancelled",
+    "[ERROR]",
+    "status: 429",
+    '"code": 429',
+    "Too Many Requests",
+    "ModelNotFoundError",
+    "An unexpected critical error occurred",
+)
+
+# Startup noise lines emitted by Gemini CLI before the actual response.
+# These are informational and should be stripped so the agent sees clean output.
+_GEMINI_NOISE_PREFIXES = (
+    "Keychain initialization encountered an error",
+    "Require stack:",
+    "Using FileKeychain fallback",
+    "Loaded cached credentials",
+    "Using default credentials",
+)
+
+
+def _strip_gemini_noise(output: str) -> str:
+    """Remove Gemini CLI startup/credential lines from captured output."""
+    cleaned = []
+    for line in output.splitlines():
+        stripped = line.strip()
+        # Skip blank lines that are part of the noise header
+        if not stripped:
+            if not cleaned:   # leading blank lines only
+                continue
+        # Skip known noise prefixes and node require-stack entries
+        if any(stripped.startswith(p) for p in _GEMINI_NOISE_PREFIXES):
+            continue
+        if stripped.startswith("- /data/data/com.termux") and "node_modules" in stripped:
+            continue
+        cleaned.append(line)
+    return "\n".join(cleaned).strip()
+
+
+def _detect_peer_error(output: str, returncode: int) -> Optional[str]:
+    """Return a short error description if the peer output signals failure, else None."""
+    if returncode not in (0, None):
+        for kw in _PEER_ERROR_KEYWORDS:
+            if kw in output:
+                if "429" in output or "capacity" in output.lower() or "rate" in output.lower():
+                    return "rate-limited (429) — model capacity exhausted"
+                return f"exited with code {returncode}"
+        # Non-zero exit with no known keyword still counts as failure
+        if returncode != 0:
+            return f"exited with code {returncode}"
+    # Check keywords even on exit-0 (some CLIs exit 0 on error)
+    for kw in _PEER_ERROR_KEYWORDS:
+        if kw in output:
+            return "API error in output"
+    return None
+
+
 def run_prompted(cli_name: str, cmd: str, flag: str, prompt_text: str) -> str:
     """
     Run a peer CLI in non-interactive mode by passing the prompt as a flag.
     e.g.  claude -p "write a function that reverses a string"
+          gemini --model gemini-2.0-flash -p "explain this"
 
     Streams output live to the terminal and captures it for Codey.
     No TUI, no trust dialogs, no pexpect needed.
+    Returns "[PEER_ERROR: ...]" if the CLI fails so callers can handle it.
     """
+    import shlex
     import subprocess
     width  = _terminal_width()
     border = "─" * width
@@ -179,9 +242,12 @@ def run_prompted(cli_name: str, cmd: str, flag: str, prompt_text: str) -> str:
     print(f"{_DIM}{border}{_RESET}\n")
 
     captured = []
+    returncode = 0
     try:
+        # shlex.split handles "gemini --model x" → ["gemini", "--model", "x"]
+        argv = shlex.split(cmd) + [flag, prompt_text]
         proc = subprocess.Popen(
-            [cmd, flag, prompt_text],
+            argv,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -192,15 +258,29 @@ def run_prompted(cli_name: str, cmd: str, flag: str, prompt_text: str) -> str:
             sys.stdout.flush()
             captured.append(line)
         proc.wait()
+        returncode = proc.returncode
     except FileNotFoundError:
         print(f"{_RED}[peer_shell] Command not found: {cmd}{_RESET}")
+        returncode = 127
     except Exception as e:
         print(f"{_RED}[peer_shell] Error: {e}{_RESET}")
+        returncode = 1
 
     print(f"\n{_DIM}{border}{_RESET}")
     print(f"{_CYAN}{_header(cli_name.upper() + ' DONE', width)}{_RESET}\n")
     info(f"Back in Codey — reading {cli_name} output…")
-    return "".join(captured)
+
+    output = "".join(captured)
+    # Strip startup noise before error detection so noise lines don't
+    # interfere, then return the clean output to the agent.
+    if cli_name == "gemini":
+        output = _strip_gemini_noise(output)
+    reason = _detect_peer_error(output, returncode)
+    if reason:
+        msg = f"[PEER_ERROR: {cli_name} failed — {reason}]"
+        warning(f"Peer {cli_name} failed: {reason}")
+        return msg
+    return output
 
 
 def run_positional(cli_name: str, cmd: str, prompt_text: str) -> str:
@@ -292,17 +372,61 @@ def run_direct(cli_name: str, cmd: str, prompt_text: str = "") -> str:
         return f"[Could not read output: {e}]"
 
 
+def _wait_for_gemini(child, pexpect_mod) -> None:
+    """
+    Handle Gemini CLI's startup sequence before we type the task.
+
+    Gemini prints keychain warnings first, then loads credentials, then
+    renders its interactive prompt (> or ❯).  We wait up to 5 s for any
+    of those signals before typing — matching the user's observed startup
+    time on Android ARM64.
+    """
+    # Phase 1 — wait for credentials to load OR the prompt to appear
+    CRED_OR_PROMPT = [
+        "Loaded cached credentials",
+        "cached credentials",
+        r"❯[\s$]",
+        r"❯$",
+        r">\s*$",
+        r"\?\s*$",
+        pexpect_mod.TIMEOUT,
+    ]
+    try:
+        idx = child.expect(CRED_OR_PROMPT, timeout=5.0)
+        hit_creds = idx < 2  # first two patterns are credential lines
+    except (pexpect_mod.TIMEOUT, pexpect_mod.EOF):
+        hit_creds = False
+
+    if hit_creds:
+        # Credentials loaded — now wait for the interactive prompt to appear
+        PROMPT_PATTERNS = [
+            r"❯[\s$]",
+            r"❯$",
+            r">\s*$",
+            r"\?\s*$",
+            pexpect_mod.TIMEOUT,
+        ]
+        try:
+            child.expect(PROMPT_PATTERNS, timeout=3.0)
+        except (pexpect_mod.TIMEOUT, pexpect_mod.EOF):
+            pass
+
+    # Give the TUI a moment to finish rendering before we send text
+    time.sleep(0.8)
+
+
 def _wait_for_ready(child, cli_name: str, pexpect_mod) -> None:
     """
     Wait for the CLI to show its ready/welcome state before we type.
-    Handles per-CLI quirks (e.g. Claude's workspace trust dialog).
+    Handles per-CLI quirks (e.g. Claude's trust dialog, Gemini's keychain init).
     """
     if cli_name == "claude":
         _wait_for_claude(child, pexpect_mod)
+    elif cli_name == "gemini":
+        _wait_for_gemini(child, pexpect_mod)
     else:
         patterns_map = {
-            "gemini": [r">\s*$", r"\?\s*$"],
-            "qwen":   [r">\s*$", r"\$\s*$"],
+            "qwen": [r">\s*$", r"\$\s*$"],
         }
         patterns = patterns_map.get(cli_name, [])
         patterns.append(pexpect_mod.TIMEOUT)

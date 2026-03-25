@@ -105,3 +105,25 @@ RETRIEVAL_CONFIG = {
 
 CODEY_VERSION = "2.6.9"
 CODEY_NAME    = "Codey-v2"
+
+# ── Planner daemon (plannd) — Change 1 ──────────────────────────────────────
+# DeepSeek-R1-Distill-Qwen-1.5B runs as a dedicated planning model on its own
+# llama-server instance (port 8081), entirely separate from the 7B server (port 8080).
+# Override any of these via environment variables without touching this file.
+DEEPSEEK_MODEL_PATH = Path(os.environ.get(
+    "CODEY_PLANNER_MODEL",
+    Path.home() / "models" / "DeepSeek-R1-1.5B" / "DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf"
+))
+PLANND_SOCKET_PATH = Path(os.environ.get(
+    "CODEY_PLANND_SOCK",
+    Path.home() / ".codey-v2" / "plannd.sock"
+))
+PLANND_SERVER_PORT = int(os.environ.get("CODEY_PLANND_PORT", "8081"))
+
+# ── 7B model memory-mapping settings — Change 2 ─────────────────────────────
+# QWEN_7B_MMAP=True  → weights are mmap'd from disk; only touched pages load into RAM.
+# QWEN_7B_MLOCK=False → OS can page weights out under memory pressure (default).
+# These settings apply ONLY to the Qwen 7B model.
+# The 1.5B and DeepSeek planner models are unaffected.
+QWEN_7B_MMAP  = os.environ.get("CODEY_7B_MMAP",  "1") != "0"   # default: True
+QWEN_7B_MLOCK = os.environ.get("CODEY_7B_MLOCK", "0") != "0"   # default: False

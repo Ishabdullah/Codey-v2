@@ -240,10 +240,17 @@ class PeerCLIManager:
         else:
             return run_direct(cli.name, cli.cmd, prompt)
 
+    @staticmethod
+    def is_peer_error(output: str) -> bool:
+        """Return True if the output is a [PEER_ERROR: ...] sentinel."""
+        return bool(output and output.startswith("[PEER_ERROR:"))
+
     def summarize_result(self, cli_name: str, output: str, original_task: str) -> str:
         """Package the peer CLI output for injection into Codey's context."""
         if not output or len(output.strip()) < 10:
             return f"[Peer: {cli_name} produced no readable output]"
+        if self.is_peer_error(output):
+            return output   # pass the error sentinel through as-is
         preview = output[:2000].strip()
         return (
             f"[Peer CLI — {cli_name}]\n"

@@ -612,7 +612,10 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
 
                 info(f"Delegating to {_cli.description}: {_peer_task[:80]}")
                 _output = _mgr.call(_cli, _enriched_task)
-                if _output and len(_output.strip()) > 10:
+                if _mgr.is_peer_error(_output):
+                    warning(f"Peer '{_peer_name}' unavailable — falling back to local inference.")
+                    # Fall through to normal agent inference below
+                elif _output and len(_output.strip()) > 10:
                     _summary = _mgr.summarize_result(_cli.name, _output, _peer_task)
                     # Store peer exchange in history so context is preserved
                     history.append({"role": "user", "content": user_message})
@@ -629,23 +632,30 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                         # Run tests if the peer provided test files
                         _has_tests = any('test' in f.lower() for f in _files_written)
                         if _has_tests:
+                            _test_file = next(f for f in _files_written if 'test' in f.lower())
                             _follow_up = (
+                                f"Original task: {user_message}\n\n"
                                 f"Files written from peer review: {', '.join(_files_written)}. "
-                                "Run the tests now with: python -m unittest test_api"
+                                f"Run the tests now: python -m pytest {_test_file} -v 2>&1 || python -m unittest {_test_file.replace('.py','')} -v 2>&1"
                             )
                         else:
                             _follow_up = (
+                                f"Original task: {user_message}\n\n"
                                 f"Files written from peer review: {', '.join(_files_written)}. "
-                                "Summarize what was fixed in 2-3 sentences."
+                                "Verify ALL requirements from the original task are met. "
+                                "Summarize what was done in 2-3 sentences."
                             )
                         return run_agent(_follow_up, history, yolo=yolo, _in_subtask=True)
                     else:
                         # No code blocks found — fall back to asking agent to interpret
                         _follow_up = (
+                            f"Original task: {user_message}\n\n"
                             f"The peer CLI {_peer_name} responded:\n\n"
                             f"{_output[:1500]}\n\n"
-                            "If the peer identified bugs or gave code fixes, apply them now "
-                            "using write_file. Otherwise, summarize findings in 2-3 sentences."
+                            "Apply any code fixes the peer identified using write_file. "
+                            "Then verify ALL requirements from the original task are met — "
+                            "if anything is missing, implement it now. "
+                            "Summarize what was done in 2-3 sentences."
                         )
                         from utils.logger import success as _suc
                         _suc(f"[Peer: {_peer_name}] done. Applying result...")
@@ -669,7 +679,7 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
     if is_complex(user_message) and not _in_subtask and not no_plan:
         info("Planning subtasks...")
         queue = plan_tasks(user_message, read_codeymd())
-        if len(queue.tasks) > 1:
+        if queue.tasks:
             show_task_plan(queue)
             try:
                 ans = console.input("  Execute this plan? [Y/n]: ").strip().lower()
@@ -678,7 +688,10 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             if ans in ("n", "no"):
                 return "[Cancelled]", history
             run_queue(queue, yolo=yolo)
-            summary = "Completed " + str(queue.done_count()) + "/" + str(len(queue.tasks)) + " tasks."
+            _failed = [t for t in queue.tasks if t.status == 'failed']
+            summary = f"Completed {queue.done_count()}/{len(queue.tasks)} tasks."
+            if _failed:
+                summary += " Failed: " + "; ".join(t.description[:50] for t in _failed) + "."
             history.append({"role": "user",     "content": user_message})
             history.append({"role": "assistant", "content": summary})
             return summary, history
@@ -810,6 +823,31 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                              show_thinking=True, max_tokens=_qa_max_tokens)
         response = clean_response(response)
         tool_dict = parse_tool_call(response)
+
+        # ── Recursive code-rescue: if recursive_infer produced good code as
+        # prose (no tool call), extract the code block and synthesize write_file
+        # directly — never ask the model again (prevents "YOUR CODE" placeholder).
+        # Only fires on step 1 (_use_recursive), only for create-file requests,
+        # only when a filename is present in the message and code is in the response.
+        if not tool_dict and _use_recursive and not is_qa:
+            _create_kws = ["create", "write", "make", "build", "generate", "implement"]
+            if any(k in user_message.lower() for k in _create_kws):
+                _fname_m = re.search(
+                    r'\b([\w][\w\-]*\.(?:py|js|ts|html|css|json|sh|txt|md))\b',
+                    user_message,
+                )
+                _code_m = re.search(
+                    r'```(?:python|py|js|ts|bash|sh|json|html|css)?\n(.*?)```',
+                    response, re.DOTALL,
+                )
+                if _fname_m and _code_m:
+                    _extracted = _code_m.group(1).rstrip()
+                    if len(_extracted) > 30:
+                        tool_dict = {
+                            "name": "write_file",
+                            "args": {"path": _fname_m.group(1), "content": _extracted},
+                        }
+
         if tool_dict:
             name = tool_dict.get("name", "")
             args = tool_dict.get("args", {})
@@ -909,6 +947,25 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             # calling read_file/shell, so we must hard-stop here.
             if name == "write_file" and not any(k in user_message.lower() for k in ["run", "execute", "test", "start", "launch"]):
                 _written_path = args.get("path", "the file")
+                # Exception: for bug-fix requests with existing test files, inject a test run
+                # instead of returning early — ensures fixes are actually verified.
+                _is_fix = any(k in user_message.lower() for k in ["fix", "bug", "patch", "correct", "repair", "debug"])
+                if _is_fix:
+                    from pathlib import Path as _Path
+                    _test_candidates = (
+                        list(_Path.cwd().glob("test_*.py")) +
+                        list(_Path.cwd().glob("*_test.py"))
+                    )
+                    if _test_candidates:
+                        _tf = _test_candidates[0].name
+                        _tf_mod = _test_candidates[0].stem
+                        messages.append({"role": "user", "content": (
+                            f"Tool result: {last_tool_result[:300]}\n"
+                            f"Fixed {_written_path}. Now run the tests to verify the fix:\n"
+                            f"python -m pytest {_tf} -v 2>&1 || python -m unittest {_tf_mod} -v 2>&1"
+                        )})
+                        auto_retries = 0
+                        continue
                 _confirm = f"Created {_written_path}"
                 separator()
                 print("\033[1;32mCodey:\033[0m " + _confirm)

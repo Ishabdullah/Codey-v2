@@ -6,12 +6,14 @@ from pathlib import Path
 from core.taskqueue import TaskQueue, STATUS_PENDING, STATUS_RUNNING
 from utils.logger import info, warning
 
-from prompts.system_prompt import GUIDANCE_HTTP_SERVER, GUIDANCE_HTTP_TESTING, GUIDANCE_SQLITE
+from prompts.system_prompt import GUIDANCE_HTTP_SERVER, GUIDANCE_HTTP_TESTING, GUIDANCE_SQLITE, GUIDANCE_PERSISTENCE
 
 PLAN_PROMPT = """Break the task into 2-5 numbered steps. Max 5 steps.
 Each step must be a single concrete action: create a file, edit a file, or run a command.
 Each step is ONE short sentence describing WHAT to do. Do NOT write any code in the plan.
-NEVER include "verify", "check", "review", "open", "save", or "navigate" steps.
+NEVER include "open", "save", or "navigate" steps (too vague).
+Running tests (e.g. "run pytest") and committing code (e.g. "git commit") ARE valid steps.
+If the user asks to run the script, add/insert records, or prove/demonstrate functionality, include EACH of those as a separate numbered step with the shell command to run.
 NEVER create .db files (sqlite3.connect() creates them automatically).
 NEVER use port 8080 (reserved). Use 8765 or 9000.
 Output ONLY the numbered list."""
@@ -97,9 +99,9 @@ def is_complex(message):
     if len(message) > 300:
         return signals >= 2
     elif len(message) > 150:
-        return signals >= 3
+        return signals >= 2
     else:
-        return signals >= 4
+        return signals >= 3
 
 def parse_task_list(model_output):
     """Extract numbered steps from model output."""
@@ -232,24 +234,46 @@ def plan_tasks(user_message, project_context=''):
     queue.save()
     return queue
 
+_SKIP_DIRS = frozenset({'__pycache__', '.git', 'node_modules', '.venv', 'venv', '.mypy_cache'})
+_COLLECT_SUFFIXES = frozenset(('.py', '.js', '.ts', '.html', '.css', '.json', '.md'))
+
 def _collect_project_files(max_chars=6000):
-    """Read small project files to inject as context between subtasks."""
+    """Read small project files to inject as context between subtasks.
+    Recurses one level into subdirectories (e.g. src/, lib/) while skipping
+    common noise directories.
+    """
     parts = []
     total = 0
-    for f in sorted(Path.cwd().iterdir()):
-        if f.is_file() and f.suffix in ('.py', '.js', '.ts', '.html', '.css', '.json'):
-            if f.name.startswith('.'):
-                continue
-            try:
-                content = f.read_text(encoding='utf-8', errors='replace')
-                if len(content) > 3000:
-                    content = content[:3000] + '\n...[truncated]'
-                if total + len(content) > max_chars:
+    cwd = Path.cwd()
+
+    def _add(f):
+        nonlocal total
+        if f.name.startswith('.') or f.suffix not in _COLLECT_SUFFIXES:
+            return
+        try:
+            content = f.read_text(encoding='utf-8', errors='replace')
+            if len(content) > 3000:
+                content = content[:3000] + '\n...[truncated]'
+            if total + len(content) > max_chars:
+                return
+            rel = f.relative_to(cwd)
+            parts.append(f"=== {rel} ===\n{content}")
+            total += len(content)
+        except Exception:
+            pass
+
+    for entry in sorted(cwd.iterdir()):
+        if total >= max_chars:
+            break
+        if entry.is_file():
+            _add(entry)
+        elif entry.is_dir() and entry.name not in _SKIP_DIRS and not entry.name.startswith('.'):
+            for f in sorted(entry.iterdir()):
+                if total >= max_chars:
                     break
-                parts.append(f"=== {f.name} ===\n{content}")
-                total += len(content)
-            except Exception:
-                pass
+                if f.is_file():
+                    _add(f)
+
     return '\n\n'.join(parts)
 
 
@@ -265,6 +289,29 @@ def _is_result_failure(summary):
     """Check if a task result contains failure signals despite claiming success."""
     low = summary.lower()
     return any(sig in low for sig in _FAILURE_SIGNALS)
+
+
+def _completion_audit(queue):
+    """
+    After all subtasks finish, check whether the overall goal was met.
+    Reports any deliverables from the original request that appear to be missing.
+    """
+    original = getattr(queue, 'original_request', '')
+    if not original:
+        return
+
+    # Extract filenames the user expected to exist
+    expected_files = _FILE_RE.findall(original)
+    missing = [f for f in expected_files if not (Path.cwd() / f).exists()]
+    failed_tasks = [t for t in queue.tasks if t.status == 'failed']
+
+    if missing:
+        warning(f"[Audit] Requested file(s) not found after all steps: {', '.join(missing)}")
+    if failed_tasks:
+        warning(f"[Audit] {len(failed_tasks)} task(s) failed: " +
+                ', '.join(t.description[:50] for t in failed_tasks))
+    if not missing and not failed_tasks:
+        info("[Audit] All expected deliverables present.")
 
 
 def run_queue(queue, yolo=False):
@@ -324,6 +371,8 @@ def run_queue(queue, yolo=False):
                 guidance += '\n' + GUIDANCE_HTTP_TESTING + '\n'
             if any(k in combined for k in ['sqlite', 'database', '.db', 'accounts']):
                 guidance += '\n' + GUIDANCE_SQLITE + '\n'
+            if any(k in combined for k in ['expense', 'tracker', 'track', 'log', 'record', 'budget', 'note', 'history', 'persist', 'save data', 'store data']):
+                guidance += '\n' + GUIDANCE_PERSISTENCE + '\n'
 
             # Always inject the full original request
             original = getattr(queue, 'original_request', '')
@@ -431,4 +480,5 @@ def run_queue(queue, yolo=False):
     finally:
         signal.signal(signal.SIGINT, old_handler)
 
+    _completion_audit(queue)
     return queue
