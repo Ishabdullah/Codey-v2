@@ -2,10 +2,12 @@ rich==14.3.3
 pytest==9.0.2
 
 # Core LLM inference
-llama-cpp-python>=0.2.50
+# Note: llama-cpp-python is optional - we use llama-server binary instead
+# llama-cpp-python>=0.2.50
 
 # Phase 4: Hierarchical Memory
-sentence-transformers>=2.2.0
+# sentence-transformers>=2.2.0  # Requires torch - not available on Termux/Android
+# We use llama.cpp embeddings instead (see embed_server.py)
 numpy>=1.24.0
 
 # Phase 5: Background Execution
