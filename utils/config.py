@@ -5,7 +5,7 @@ from pathlib import Path
 CODEY_DIR = Path(os.environ.get("CODEY_DIR", Path.home() / "codey-v2"))
 MODEL_PATH = Path(os.environ.get(
     "CODEY_MODEL",
-    Path.home() / "models" / "qwen2.5-coder-7b" / "Qwen2.5-Coder-7B-Instruct-Q4_K_M.gguf"
+    Path.home() / "models" / "qwen2.5-coder-7b" / "qwen2.5-coder-7b-instruct-q4_k_m.gguf"
 ))
 
 # Dedicated embedding model — Option C (v2.6.6)
