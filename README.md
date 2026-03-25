@@ -482,6 +482,118 @@ codeyd2 status
 
 ---
 
+## Knowledge Base Setup (Optional but Recommended)
+
+Codey-v2 includes a powerful retrieval-augmented generation (RAG) system that searches local documentation to provide more accurate and contextual responses. Setting up a knowledge base significantly improves Codey's understanding of programming languages, frameworks, and best practices.
+
+### What Gets Indexed
+
+- **Markdown documentation** (`.md` files)
+- **Text files** (`.txt` files)
+- **Code examples** (`.py`, `.js`, etc.)
+- **Structured into chunks** (~512 words each with overlap)
+- **Searchable via** BM25 keyword + semantic embeddings (hybrid retrieval)
+
+### Quick Setup: 5 Recommended Repositories
+
+Install a comprehensive programming knowledge base with these 5 open-source repositories:
+
+```bash
+# Navigate to Codey-v2 directory
+cd ~/codey-v2
+
+# Create knowledge directory
+mkdir -p knowledge
+
+# Clone 5 curated documentation repositories
+cd knowledge
+git clone --depth 1 https://github.com/swaroopch/byte-of-python
+git clone --depth 1 https://github.com/Aahil13/The-JS-Guide
+git clone --depth 1 https://github.com/luckrnx09/python-guide-for-javascript-engineers
+git clone --depth 1 https://github.com/EbookFoundation/free-programming-books
+git clone --depth 1 https://github.com/mdn/content
+
+# Return to codey-v2 root
+cd ~/codey-v2
+```
+
+**Total size:** ~266MB  
+**Files indexed:** ~38 markdown files (core docs)  
+**Chunks created:** ~1167 searchable chunks
+
+### Build the Search Index
+
+After cloning the repositories, build the semantic index:
+
+```bash
+# Index all chunks and build embeddings (30-60 minutes)
+python3 -c "from tools.kb_scraper import index_directory; from tools.kb_semantic import build_semantic_index; index_directory('knowledge'); build_semantic_index()"
+```
+
+**Or run in background** (won't block terminal):
+
+```bash
+cd ~/codey-v2 && nohup python3 -c "from tools.kb_scraper import index_directory; from tools.kb_semantic import build_semantic_index; index_directory('knowledge'); build_semantic_index()" > embed.log 2>&1 &
+
+# Check progress
+tail -f embed.log
+```
+
+### Verify Knowledge Base
+
+```bash
+python3 -c "from tools.kb_semantic import index_stats; print(index_stats())"
+```
+
+Expected output:
+```
+{
+  'chunk_files': 500,
+  'total_chunks': 1167,
+  'has_semantic': True,
+  'backend': 'hybrid (BM25 + embeddings)'
+}
+```
+
+### Test It
+
+Ask Codey questions about the documentation:
+
+```bash
+# Python questions
+codey2 "Explain Python list comprehensions with examples"
+
+# JavaScript questions
+codey2 "How do I use async/await in JavaScript?"
+
+# Web development
+codey2 "What is the DOM and how do I manipulate it?"
+```
+
+### Add Your Own Documentation
+
+```bash
+# Copy your docs to knowledge directory
+cp my_custom_docs.md ~/codey-v2/knowledge/docs/
+
+# Re-index to include new files
+python3 -c "from tools.kb_scraper import index_directory; index_directory('knowledge')"
+```
+
+### Knowledge Base Features
+
+| Feature | Description |
+|---------|-------------|
+| **Hybrid search** | BM25 keyword + 768-dim cosine similarity (RRF merging) |
+| **Auto-retrieval** | Relevant chunks injected into every inference call |
+| **NEED_DOCS trigger** | Model can request targeted KB lookup during refinement |
+| **Skill repos** | Support for Claude skills, superpowers, and custom templates |
+| **Graceful degradation** | Works without embeddings (BM25 fallback always active) |
+
+> **Note:** The embedding model (`nomic-embed-text-v1.5`) runs automatically when you start the daemon (`codeyd2 start`). No additional setup required.
+
+---
+
 ## Commands
 
 ### Daemon Management (`codeyd2`)
