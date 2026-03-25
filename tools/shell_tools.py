@@ -47,15 +47,15 @@ def is_dangerous(command: str) -> bool:
     dangerous_patterns = ["sudo ", "> /dev/", "| sh", "| bash", ":(){:|:&};:"]
     return any(p in cmd_lower for p in dangerous_patterns)
 
-def shell(command: str, yolo: bool = False, timeout: int = 30, skip_structure_check: bool = False) -> str:
+def shell(command: str, yolo: bool = False, timeout: int = 1800, skip_structure_check: bool = False) -> str:
     """
     Execute a shell command. Returns combined stdout + stderr.
     Prompts for confirmation on dangerous or any command if confirm_shell=True.
-    
+
     Args:
         command: The shell command to execute
         yolo: Skip confirmation prompts
-        timeout: Command timeout in seconds
+        timeout: Command timeout in seconds (default: 30 minutes for long-running tasks)
         skip_structure_check: Skip shell metacharacter validation (for trusted callers)
         
     Returns:
