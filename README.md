@@ -16,6 +16,8 @@ Codey-v2 transforms Codey https://github.com/Ishabdullah/Codey from a session-ba
   v2.6.9 · Learning AI Agent · Termux
 ```
 
+![Codey Mascot](assets/codey-mascot.png)
+
 ---
 
 ## Key Features
