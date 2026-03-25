@@ -484,6 +484,18 @@ def _detect_peer_delegation(user_message: str):
     m = _pattern.search(user_message)
     if m:
         return m.group(1).lower(), m.group(2).strip()
+
+    # Also match direct-name patterns: "gemini, X" / "qwen: X" / "claude - X"
+    _direct = re.compile(
+        r'^('
+        + '|'.join(_PEER_NAMES)
+        + r')[\s,:\-]+(.+)',
+        re.IGNORECASE,
+    )
+    m2 = _direct.match(user_message.strip())
+    if m2:
+        return m2.group(1).lower(), m2.group(2).strip()
+
     return None, None
 
 

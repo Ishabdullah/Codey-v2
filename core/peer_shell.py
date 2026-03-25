@@ -2,7 +2,7 @@
 """
 PTY-based peer CLI runner for Codey-v2.
 
-Spawns a peer CLI (claude, gemini, copilot, qwen) directly inside Codey's
+Spawns a peer CLI (claude, gemini, qwen) directly inside Codey's
 terminal window, automatically types the task prompt into it, and captures
 the full response.
 
@@ -249,7 +249,7 @@ def run_positional(cli_name: str, cmd: str, prompt_text: str) -> str:
 def run_direct(cli_name: str, cmd: str, prompt_text: str = "") -> str:
     """
     Run a peer CLI directly in the real terminal (no nested PTY).
-    Used for CLIs like copilot that bundle their own native PTY module
+    Used for CLIs that bundle their own native PTY module
     and crash when spawned inside pexpect's PTY.
 
     Output is captured via the `script` utility so Codey can read it.

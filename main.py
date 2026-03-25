@@ -694,7 +694,7 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
         parts = cmd.split(maxsplit=2)
         available = mgr.available()
         if not available:
-            warning("No peer CLIs found (claude / gemini / copilot / qwen).")
+            warning("No peer CLIs found (claude / gemini / qwen).")
             return True, history
 
         # /peer → list available CLIs
@@ -702,8 +702,9 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
             console.print("[bold]Available peer CLIs:[/bold]")
             for c in available:
                 console.print(f"  [cyan]{c.name}[/cyan]  —  {c.description}")
-            console.print("\nUsage: /peer <name> <task>")
-            console.print("       /peer copilot write a hello world in Python")
+            console.print("\nUsage: /peer <name> <task>  or  /peer <name>  (open interactive)")
+            console.print("       /peer gemini explain this function")
+            console.print("       /peer qwen write a hello world in Python")
             return True, history
 
         # /peer <name> <task>  OR  /peer <task>  (auto-pick)

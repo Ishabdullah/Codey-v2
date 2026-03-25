@@ -3,7 +3,7 @@
 Peer CLI escalation for Codey-v2.
 
 When Codey exhausts its retry budget on a task, it can escalate to an
-external AI coding CLI: Claude Code, Gemini CLI, GitHub Copilot CLI, or Qwen CLI.
+external AI coding CLI: Claude Code, Gemini CLI, or Qwen CLI.
 
 Flow:
   1. Codey hits max retries on a task
@@ -55,7 +55,7 @@ PEER_REGISTRY: List[PeerCLI] = [
         name="gemini",
         description="Gemini CLI (Google)",
         cmd="gemini",
-        check_cmd="gemini --version",
+        check_cmd="",   # No Node.js native modules — shutil.which check is sufficient
         strengths=["explain", "analysis", "large_context", "review", "generate"],
         interactive=False,
         use_pty=False,
@@ -65,7 +65,7 @@ PEER_REGISTRY: List[PeerCLI] = [
         name="qwen",
         description="Qwen CLI",
         cmd="qwen",
-        check_cmd="qwen --version",
+        check_cmd="",   # No Node.js native modules — shutil.which check is sufficient
         strengths=["generate", "code", "completion", "quick_fix"],
         interactive=False,
         use_pty=False,
@@ -107,7 +107,7 @@ class PeerCLIManager:
             return False
         # For CLIs that bundle native node modules (e.g. node-pty), do a quick
         # smoke-test to catch platforms where the binary exists but crashes on
-        # start (e.g. copilot on Android ARM64 missing pty.node prebuilds).
+        # start (e.g. missing pty.node prebuilds on Android ARM64).
         if cli.check_cmd:
             try:
                 result = subprocess.run(
@@ -125,6 +125,9 @@ class PeerCLIManager:
                 return not native_crash
             except FileNotFoundError:
                 return False
+            except subprocess.TimeoutExpired:
+                # Timed out but binary exists (shutil.which passed) — assume installed
+                return True
             except Exception:
                 return False
         return True
@@ -279,7 +282,7 @@ def escalate(
 
     if not mgr.available():
         warning(
-            "No peer CLIs found. Install claude / gemini / gh copilot / qwen "
+            "No peer CLIs found. Install claude / gemini / qwen "
             "to enable escalation."
         )
         return None
