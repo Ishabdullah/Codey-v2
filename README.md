@@ -155,10 +155,11 @@ Codey-v2 is a **persistent, autonomous coding agent** that runs as a background 
    - **Mitigations**: Socket created with 0600 permissions (owner-only); daemon runs under your Termux/Linux user (no root required). Stop the daemon when not in use (`codeyd2 stop`). Monitor with `codeyd2 status` or `ps`.  
    - **Recommendation**: Only start on trusted devices; avoid public/multi-user environments.
 
-2. **Shell Command Execution & Tool Use**  
-   - Tools can execute shell commands (e.g., file ops, git, etc.) based on agent decisions.  
-   - **Risk**: Prompt injection or hallucinated/malicious output could lead to unintended commands (e.g., `rm -rf`, data exfiltration if network tools added later).  
-   - **Mitigations**: Aggressive shell injection prevention (blocks `;`, `&&`, `||`, `|`, backticks, `\( ()`, ` \){}`, `<()`, `>()`, etc.); commands run in user context only. User must confirm high-risk actions in most flows (expandable).  
+2. **Shell Command Execution & Tool Use**
+   - Tools can execute shell commands (e.g., file ops, git, etc.) based on agent decisions.
+   - **Risk**: Prompt injection or hallucinated/malicious output could lead to unintended commands (e.g., `rm -rf`, data exfiltration if network tools added later).
+   - **Mitigations**: Aggressive shell injection prevention (blocks `;`, `&&`, `||`, `|`, backticks, `\( ()`, ` \){}`, `<()`, `>()`, etc.); commands run in user context only. User must confirm high-risk actions in most flows (expandable).
+   - **Timeout**: Shell commands default to a **30-minute timeout (1800s)** to support long-running tasks such as builds, package installs, and index operations. Pass `timeout=N` to `shell()` to override per-call.
    - **Recommendation**: Always review `--plan` output before execution; use `--no-execute` flag for dry runs.
 
 3. **Self-Modification & Code Alteration**  

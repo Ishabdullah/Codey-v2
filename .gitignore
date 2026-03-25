@@ -32,10 +32,9 @@ codey_sessions/
 checkpoints/
 
 # ── Codey-v2: knowledge base (auto-generated, per-install) ───────────────────
-# Chunk indexes, vector stores, and cloned skill repos are generated locally.
-# Never commit — chunk files can contain secrets from indexed external repos.
-knowledge/embeddings/
-knowledge/skills/
+# 266MB of external content (cloned repos, chunk indexes, vector stores).
+# Generated locally — never commit.
+knowledge/
 
 # ── Codey-v2: model files ─────────────────────────────────────────────────────
 # Models live in ~/models/, never committed
