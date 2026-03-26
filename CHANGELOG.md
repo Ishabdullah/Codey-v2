@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.7.0] - 2026-03-25
+
+### Added — Three-Model Architecture + DeepSeek Planner Daemon
+
+#### New Components
+- **`core/plannd.py`** — Planner daemon: runs `DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M` on port 8081 as a
+  dedicated task-planning model. Listens on Unix socket `~/.codey-v2/plannd.sock`. Accepts raw user
+  prompts, returns numbered step lists for the 7B execution model to work through one at a time.
+- **`core/planner_client.py`** — Async socket client for plannd. Used by daemon to send planning
+  requests and receive step lists. Raises `ConnectionRefusedError` if plannd is not running (silent
+  fallback).
+
+#### Architecture Changes
+- **Three-daemon architecture**: `codeyd2` (main daemon, Qwen 7B on port 8080) + `plannd`
+  (DeepSeek planner on port 8081) + embed server (nomic-embed on port 8082). All three start/stop
+  together via `codeyd2 start` / `codeyd2 stop`.
+- **`core/daemon.py`** — `_handle_command()` wired to plannd via `send_plan_request_async()`.
+  45-second timeout with full silent fallback chain. `plan_only=True` flag prevents double execution:
+  daemon returns the plan without queuing tasks, main.py executes each step locally.
+- **`main.py`** — `_try_daemon_plan()` and `_run_with_plan()` added. `send_command()` was already
+  defined but was never called for planning; this wiring fix is what enables the end-to-end planner
+  flow.
+- **`core/daemon.py` `send_command()`** — socket timeout increased from 30 s to 60 s to accommodate
+  DeepSeek inference latency on CPU.
+
+#### Memory-Mapping Fixes
+- **`utils/config.py`** — `QWEN_7B_MMAP = True`, `QWEN_7B_MLOCK = False` added. Explicit config
+  for 7B mmap behaviour rather than relying on llama.cpp defaults.
+- **`core/loader_v2.py`** — Passes `--mmap` / `--no-mmap` explicitly based on config. Critical
+  fix: `--no-mlock` does NOT exist in this llama.cpp build. Passing it would crash the server
+  silently. The fix: omit `--mlock` entirely (llama.cpp default is mlock-off). Only pass `--mlock`
+  when explicitly enabled via `QWEN_7B_MLOCK=1`.
+
+#### Changed
+- `codeyd2` — `start` and `stop` commands manage plannd lifecycle. `status` shows mmap state and
+  health-checks all three model ports (8080, 8081, 8082).
+- `utils/config.py` — version bumped: `2.6.9` → `2.7.0`
+
+---
+
 ## [v2.6.10] - 2026-03-18
 ### Added
 - Advanced context management (better token efficiency, phase-aware handling)
@@ -599,6 +639,7 @@ The following features are explicitly out of scope for v2.0.0 but may be conside
 
 | Version | Python | Termux | llama.cpp | Models |
 |---------|--------|--------|-----------|--------|
+| 2.7.0 | 3.12+ | Latest | Latest stable | Qwen2.5-Coder-7B + DeepSeek-R1-1.5B + nomic-embed |
 | 2.6.9 | 3.12+ | Latest | Latest stable | Qwen2.5-Coder-7B |
 | 2.0.0 | 3.12+ | Latest | Latest stable | Qwen2.5-7B, Qwen2.5-1.5B |
 | 1.0.0 | 3.10+ | Latest | Latest stable | Qwen2.5-Coder-7B |
