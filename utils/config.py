@@ -46,7 +46,11 @@ AGENT_CONFIG = {
     "token_budget":   1500,
     "confirm_shell":  True,
     "confirm_write":  True,
-    "history_turns":  3,
+    "history_turns":  8,
+    # Optional callable(command: str) -> str that replaces the default shell()
+    # invocation.  Used by the daemon to enforce an allowlist without modifying
+    # the global shell tool.  None means use the default shell() function.
+    "_shell_fn":      None,
 }
 
 # Thermal management + adaptive depth — Phase 8 (v2.6.8)
@@ -98,21 +102,26 @@ RETRIEVAL_CONFIG = {
     "semantic_search":    True,         # prefer embeddings when index exists
     "max_chunks":         4,            # max results per retrieval query
     "budget_chars":       2400,         # max chars of retrieved content (~600 tokens)
-    "embedding_model":    "all-MiniLM-L6-v2",
+    "embedding_model":    "all-MiniLM-L6-v2",  # legacy key (sentence-transformers era); actual model is EMBED_MODEL_PATH (nomic-embed-text-v1.5)
     "min_score":          0.0,          # minimum raw score (keyword: overlap count)
-    "semantic_threshold": 0.3,          # minimum cosine similarity for semantic results
+    "semantic_threshold": 0.3,          # minimum cosine similarity per chunk
+    "relevance_gate":     0.72,         # min best-chunk cosine to inject anything at all
+                                        # (prevents noisy general content injection when
+                                        # the KB has no specifically relevant material)
 }
 
-CODEY_VERSION = "2.6.9"
+CODEY_VERSION = "2.7.0"
 CODEY_NAME    = "Codey-v2"
 
-# ── Planner daemon (plannd) — Change 1 ──────────────────────────────────────
-# DeepSeek-R1-Distill-Qwen-1.5B runs as a dedicated planning model on its own
+# ── Summarizer daemon (plannd) — Change 1 ────────────────────────────────────
+# Qwen2.5-0.5B runs as a dedicated summarization/planning model on its own
 # llama-server instance (port 8081), entirely separate from the 7B server (port 8080).
+# Planning is handled by the 7B model (PLANNER_USE_7B=True); plannd only summarizes.
+# NOTE: DEEPSEEK_MODEL_PATH is a legacy name — the model is Qwen2.5-0.5B, not DeepSeek.
 # Override any of these via environment variables without touching this file.
 DEEPSEEK_MODEL_PATH = Path(os.environ.get(
     "CODEY_PLANNER_MODEL",
-    Path.home() / "models" / "DeepSeek-R1-1.5B" / "DeepSeek-R1-Distill-Qwen-1.5B-Q4_K_M.gguf"
+    Path.home() / "models" / "qwen2.5-0.5b" / "qwen2.5-0.5b-instruct-q8_0.gguf"
 ))
 PLANND_SOCKET_PATH = Path(os.environ.get(
     "CODEY_PLANND_SOCK",
@@ -124,6 +133,13 @@ PLANND_SERVER_PORT = int(os.environ.get("CODEY_PLANND_PORT", "8081"))
 # QWEN_7B_MMAP=True  → weights are mmap'd from disk; only touched pages load into RAM.
 # QWEN_7B_MLOCK=False → OS can page weights out under memory pressure (default).
 # These settings apply ONLY to the Qwen 7B model.
-# The 1.5B and DeepSeek planner models are unaffected.
+# The 0.5B summarizer model is unaffected.
 QWEN_7B_MMAP  = os.environ.get("CODEY_7B_MMAP",  "1") != "0"   # default: True
 QWEN_7B_MLOCK = os.environ.get("CODEY_7B_MLOCK", "0") != "0"   # default: False
+
+# ── 7B self-planning settings (replaces plannd) ──────────────────────────────
+# The 7B model on port 8080 handles planning directly.
+# Temperature 0.2 keeps plans focused; 256 tokens is enough for 5 clean steps.
+PLANNER_USE_7B       = True
+PLANNER_TEMPERATURE  = 0.2
+PLANNER_MAX_TOKENS   = 512  # raised from 256 — avoids step truncation on complex tasks

@@ -313,7 +313,12 @@ def _rrf_merge(result_lists: list, k: int = 60, top_n: int = 5) -> list:
                 seen[key] = {"result": item, "rrf_score": contrib}
 
     ranked = sorted(seen.values(), key=lambda x: x["rrf_score"], reverse=True)
-    return [entry["result"] for entry in ranked[:top_n]]
+    out = []
+    for entry in ranked[:top_n]:
+        item = dict(entry["result"])
+        item["score"] = round(entry["rrf_score"], 6)
+        out.append(item)
+    return out
 
 
 # ── Chunk loading ─────────────────────────────────────────────────────────────
@@ -623,9 +628,10 @@ def semantic_search(query: str, top_k: int = 5) -> list:
             if i < len(mapping):
                 m = mapping[int(i)]
                 vector_results.append({
-                    "text":   m["text"],
-                    "source": m.get("source", m.get("filename", "")),
-                    "score":  float(sims[i]),
+                    "text":           m["text"],
+                    "source":         m.get("source", m.get("filename", "")),
+                    "score":          float(sims[i]),
+                    "semantic_score": float(sims[i]),  # preserved for relevance gate
                 })
 
         if not vector_results:

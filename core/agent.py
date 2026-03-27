@@ -8,7 +8,6 @@ from core.codeymd import read_codeymd, find_codeymd
 from core.summarizer import should_summarize, summarize_history
 from core.tokens import get_context_usage, usage_bar
 from core.learning import get_learning_manager
-from prompts.system_prompt import SYSTEM_PROMPT
 from tools.file_tools import tool_read_file, tool_write_file, tool_append_file, tool_list_dir
 from tools.patch_tools import tool_patch_file
 from tools.shell_tools import shell, search_files
@@ -43,7 +42,9 @@ TOOLS = {
     "patch_file":   lambda args: tool_patch_file(args["path"], args["old_str"], args["new_str"]),
     "append_file":  lambda args: tool_append_file(args["path"], args["content"]),
     "list_dir":     lambda args: tool_list_dir(args.get("path", ".")),
-    "shell":        lambda args: shell(args["command"]),
+    # Route through AGENT_CONFIG["_shell_fn"] when set (e.g. daemon allowlist guard).
+    # Falls back to the standard shell() when no override is installed.
+    "shell":        lambda args: (AGENT_CONFIG.get("_shell_fn") or shell)(args["command"]),
     "search_files": lambda args: search_files(args["pattern"], args.get("path", ".")),
     "note_save":    _note_save,
     "note_forget":  _note_forget,
@@ -100,32 +101,41 @@ def extract_json(raw):
     """
     raw = raw.strip()
 
-    # Fix Python triple-quotes → JSON strings (common 7B model error)
-    # The model writes """content""" with Python-style escapes inside.
-    # Step 1: decode Python escapes (\n → newline, \" → quote)
-    # Step 2: re-encode for JSON (newline → \n, quote → \")
+    # Fix Python triple-quotes → JSON strings (common 7B model error).
+    # The model writes """content""" instead of a proper JSON string.
+    # Handles nested docstrings inside the code content.
     def _fix_triple_quotes(s):
+        # The original s.find('"""') always matched the FIRST triple-quote
+        # found after the opening — which is the docstring opener inside the
+        # code content, not the real closing delimiter.  Fix: scan all """
+        # positions and pick the LAST one followed by } or , (JSON context),
+        # so nested docstrings in the code are captured as part of the content.
         result = []
         i = 0
         while i < len(s):
             if s[i:i+3] == '"""':
-                # Find closing triple-quote
-                end = s.find('"""', i + 3)
-                if end == -1:
-                    inner = s[i+3:]
-                    i = len(s)
+                rest = s[i + 3:]
+                positions = [m.start() for m in re.finditer(r'"""', rest)]
+                closing_pos = -1
+                for pos in reversed(positions):
+                    after = rest[pos + 3:].lstrip()
+                    if not after or after[0] in ',}':
+                        closing_pos = pos
+                        break
+                if closing_pos == -1 and positions:
+                    closing_pos = positions[-1]
+                if closing_pos != -1:
+                    inner = rest[:closing_pos]
+                    i = i + 3 + closing_pos + 3
                 else:
-                    inner = s[i+3:end]
-                    i = end + 3
-                # Step 1: decode Python escapes to actual characters
-                inner = inner.replace('\\"', '"')
-                inner = inner.replace('\\n', '\n')
-                inner = inner.replace('\\t', '\t')
-                # Step 2: re-encode for JSON
+                    inner = rest
+                    i = len(s)
+                # Encode raw content as a proper JSON string
                 inner = inner.replace('\\', '\\\\')
                 inner = inner.replace('"', '\\"')
                 inner = inner.replace('\n', '\\n')
                 inner = inner.replace('\t', '\\t')
+                inner = inner.replace('\r', '\\r')
                 result.append('"' + inner + '"')
             else:
                 result.append(s[i])
@@ -264,42 +274,42 @@ def execute_tool(tool_dict):
     start_time = time.time()
     
     try:
-        # Get old content before write for diff display
+        # For write_file: read old content for diff display BEFORE the write,
+        # show the display panel immediately after, then release old_content.
+        # This avoids holding both old and new content for the entire function.
+        _is_write = name == "write_file"
+        _is_patch = name == "patch_file"
         old_content = None
-        if name == "write_file":
+        if _is_write:
             from pathlib import Path as _P
             p = _P(args.get("path", ""))
             if p.exists():
                 try: old_content = p.read_text()
                 except: pass
-        
-        # ── Pre-write syntax check (Phase 2) ────────────────────────────────
-        # Check syntax but STILL WRITE the file. Blocking writes entirely
-        # creates a death spiral where the 7B model retries with less context
-        # and produces even worse code. Better to write it and report the error.
-        _syntax_warning = ""
-        if name == "write_file":
-            _wpath = args.get("path", "")
-            _wcontent = args.get("content", "")
-            if _wpath.endswith(".py") and _wcontent:
-                try:
-                    from core.linter import check_syntax
-                    _syn_err = check_syntax(_wcontent, _wpath)
-                    if _syn_err:
-                        _syntax_warning = f"\n[WARNING] Syntax issue: {_syn_err}"
-                except Exception:
-                    pass
 
         result = TOOLS[name](args)
-        if _syntax_warning and not result.startswith("[ERROR]"):
-            result += _syntax_warning
         duration = time.time() - start_time
 
-        # ── Auto-lint after successful Python file write (Phase 2) ───────────
-        # Only inject ERRORS into agent context (causes agent to self-correct).
-        # Style warnings are shown to the user in the terminal but NOT injected
-        # — otherwise the agent loops trying to fix unused-import noise etc.
-        if name in ("write_file", "patch_file") and not result.startswith("[ERROR]"):
+        # Display IMMEDIATELY after write — then release old_content so GC
+        # can reclaim it before linting/learning/memory-loading pile on.
+        try:
+            if _is_write:
+                show_file_write(args.get("path",""), args.get("content",""), old_content)
+                del old_content  # release ~10-50KB before next steps
+            elif _is_patch:
+                show_patch(args.get("path",""), args.get("old_str",""), args.get("new_str",""))
+            elif name == "shell":
+                is_err = is_error(result, "shell")
+                show_shell(args.get("command",""), result, error=is_err)
+            elif name != "read_file":
+                show_tool_generic(name, args, result)
+        except Exception:
+            pass  # display failure must not mask a successful tool result
+        old_content = None  # ensure released even if display was skipped
+
+        # ── Post-write lint (replaces pre-write syntax check + post-write lint)
+        # Single pass — the linter reads from disk (no extra content copy).
+        if (_is_write or _is_patch) and not result.startswith("[ERROR]"):
             _lpath = args.get("path", "")
             if _lpath.endswith(".py"):
                 try:
@@ -308,10 +318,8 @@ def execute_tool(tool_dict):
                     if _issues:
                         _errors   = [i for i in _issues if i.severity == "error"]
                         _warnings = [i for i in _issues if i.severity != "error"]
-                        # Inject errors so the agent fixes them in the next step
                         if _errors:
                             result += format_issues(_errors)
-                        # Show warnings to the user without pressuring the agent
                         if _warnings:
                             from utils.logger import warning as _lwarn
                             _lwarn(f"[Linter/{_linter_used}] {len(_warnings)} style warning(s) in {_lpath}:")
@@ -322,25 +330,14 @@ def execute_tool(tool_dict):
                 except Exception:
                     pass  # linter unavailable — continue normally
 
-        # Learn from successful file operations
-        if name in ("write_file", "patch_file") and not result.startswith("[ERROR]"):
-            # Learn preferences from generated content
-            content = args.get("content", "")
-            path = args.get("path", "")
-            if content and path:
-                learning.learn_from_file(path, content)
-        
-        # Display using Claude Code style panels
-        if name == "write_file":
-            show_file_write(args.get("path",""), args.get("content",""), old_content)
-        elif name == "patch_file":
-            show_patch(args.get("path",""), args.get("old_str",""), args.get("new_str",""))
-        elif name == "shell":
-            is_err = is_error(result, "shell")
-            show_shell(args.get("command",""), result, error=is_err)
-        elif name != "read_file":
-            show_tool_generic(name, args, result)
-        
+        # Log successful actions to episodic memory (lightweight — just a string)
+        if (_is_write or _is_patch or name == "shell") and not result.startswith("[ERROR]"):
+            from core.memory import memory as _mem
+            _mem.log_action(name, result[:100])
+
+        # NOTE: learning.learn_from_file is NOT called here — it's called once
+        # in the agent loop after execute_tool returns, avoiding a duplicate pass.
+
         return result
         
     except Exception as e:
@@ -544,20 +541,19 @@ def _auto_apply_peer_code(peer_output):
                     continue  # Skip files with syntax errors
             except Exception:
                 pass
-        # Write the file
+        # Write the file through the safety layer (workspace boundary, write-protection, etc.)
         fpath = os.path.join(os.getcwd(), fname)
-        try:
-            from pathlib import Path as _WP
-            _WP(fpath).write_text(code.rstrip() + '\n', encoding='utf-8')
-            files_written.append(fname)
-            success(f"Written {fname} from peer review ({len(code)} chars)")
-        except Exception as e:
-            warning(f"Failed to write {fname} from peer: {e}")
+        _write_result = tool_write_file(fpath, code.rstrip() + '\n')
+        if _write_result.startswith("[ERROR]") or _write_result.startswith("[CANCELLED]"):
+            warning(f"Failed to write {fname} from peer: {_write_result}")
+            continue
+        files_written.append(fname)
+        success(f"Written {fname} from peer review ({len(code)} chars)")
 
     return files_written
 
 
-def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, _in_subtask=False):
+def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, _in_subtask=False, _plan_rag_block=""):
     # Reset streaming flag at start of each agent turn
     import core.inference_v2 as _inf_mod
     _inf_mod._last_was_streamed = False
@@ -585,6 +581,20 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                 }
                 _is_review = any(k in _peer_task.lower() for k in _REVIEW_KW)
                 _enriched_task = _peer_task
+                if _is_review:
+                    # Data-privacy gate: warn before sending local file contents
+                    # to an external AI service. This is explicit and opt-in.
+                    from utils.logger import warning as _priv_warn, confirm as _priv_confirm
+                    _priv_warn(
+                        f"Sending project files to {_peer_name} (external AI). "
+                        "Local source code will leave this device."
+                    )
+                    _include_files = _priv_confirm(
+                        f"Share local project file contents with {_peer_name}?"
+                    )
+                    if not _include_files:
+                        # Use task only — no file contents sent externally
+                        _is_review = False
                 if _is_review:
                     from pathlib import Path as _PP
                     _file_parts = []
@@ -707,7 +717,7 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
     from core.memory import memory as _mem
     _mem.tick()
     # ── Phase 3: Layered system prompt (draft phase) ──────────────────────────
-    sys_prompt = build_recursive_prompt(user_message, phase="draft")
+    sys_prompt = build_recursive_prompt(user_message, phase="draft", plan_rag_block=_plan_rag_block)
     messages = [{"role": "system", "content": sys_prompt}]
 
     # Adaptive context management — only compress when context > 75% of n_ctx
@@ -715,9 +725,9 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
     _tmp_msgs = messages + history + [{"role": "user", "content": user_message}]
     if should_summarize(history, system_messages=_tmp_msgs):
         history = summarize_history(history)
-        # Also try memory manager compression for file context
-        if len(history) >= 8:
-            history = _mem.compress_summary(history)
+        # NOTE: _mem.compress_summary() was removed here — it calls infer()
+        # on the same 7B model that's about to run the real task, causing
+        # a single-slot collision. The 0.5B summarize_history() is sufficient.
     # Rebuild messages with potentially compressed history
     messages = [{"role": "system", "content": sys_prompt}]
     
@@ -736,6 +746,9 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
         "remember", "don't forget", "forget",
         # Peer delegation triggers — "ask gemini to X" should never be QA:
         "ask gemini", "ask claude", "call gemini", "call claude",
+        # Planner step verbs — daemon steps like "verify the output" must use shell,
+        # not return plain text answers:
+        "verify", "test", "validate", "confirm", "complete", "finish",
     ]
     _has_action = any(re.search(r'\b' + re.escape(k) + r'\b', msg_low) for k in _action_kws)
     _question_starters = (
@@ -865,10 +878,18 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                 if path and path.lower() not in msg_low:
                     from pathlib import Path as _P
                     if not _P(path).exists() and not any(k in msg_low for k in ["create", "write", "new", "make"]):
-                        warning(f"Model tried to create/edit unexpected file: {path}")
-                        messages.append({"role": "assistant", "content": response})
-                        messages.append({"role": "user", "content": f"I didn't ask to modify '{path}'. Please answer my question directly."})
-                        continue
+                        # Exception: if we are retrying after a "No such file" shell
+                        # error, the model is correctly trying to create the missing
+                        # file — allow it through instead of blocking.
+                        _missing_file_retry = (
+                            auto_retries > 0
+                            and "no such file" in last_tool_result.lower()
+                        )
+                        if not _missing_file_retry:
+                            warning(f"Model tried to create/edit unexpected file: {path}")
+                            messages.append({"role": "assistant", "content": response})
+                            messages.append({"role": "user", "content": f"I didn't ask to modify '{path}'. Please answer my question directly."})
+                            continue
 
             sig = name + ":" + json.dumps(args, sort_keys=True)
             if sig in tools_used:
@@ -887,18 +908,21 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             tools_used.append(sig)
             last_tool_result = execute_tool(tool_dict)
             if name in ("write_file", "patch_file"):
-                from core.context import load_file
                 from core.memory import memory as _mem
                 fpath = args.get("path", "")
-                load_file(fpath)
+                # Load into working memory directly from args — avoids re-reading
+                # from disk (the content is already in args["content"]).
+                _wcontent = args.get("content", "") or args.get("new_str", "")
+                if _wcontent and fpath:
+                    _mem.load_file(fpath, _wcontent)
                 _mem.touch_file(fpath)
-                if fpath.endswith(".py"):
+                # Learn preferences (single call — removed duplicate from execute_tool)
+                if fpath.endswith(".py") and _wcontent:
                     try:
-                        from pathlib import Path as _P
-                        _content = _P(fpath).read_text(encoding="utf-8", errors="replace")
-                        _get_learning().learn_from_file(fpath, _content)
+                        _get_learning().learn_from_file(fpath, _wcontent)
                     except Exception:
                         pass
+                del _wcontent  # release content ref
             elif name == "read_file":
                 fpath = args.get("path", "")
                 if fpath.endswith(".py") and not last_tool_result.startswith("[ERROR]"):
@@ -921,6 +945,26 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                     _file_words = ["create", "write", "make", "build", "file", ".py", ".js", ".html", ".txt", ".md"]
                     if any(w in msg_low for w in _file_words):
                         messages.append({"role": "user", "content": "Error: shell commands are blocked. Use the write_file tool instead to create the file. Output ONLY a <tool> block with write_file."})
+                        continue
+                # FIX 3: argparse / usage errors mean the command was called wrong,
+                # not that the source code is broken.  Tell the model to re-run with
+                # correct arguments instead of patching working files.
+                if name == "shell":
+                    _res_low = last_tool_result.lower()
+                    _USAGE_SIGNALS = [
+                        "usage:",
+                        "error: the following arguments are required",
+                        "unrecognized arguments",
+                    ]
+                    if any(sig in _res_low for sig in _USAGE_SIGNALS):
+                        messages.append({
+                            "role": "user",
+                            "content": (
+                                "The command failed because it was called incorrectly. "
+                                "Run it again with the correct arguments based on the original task. "
+                                "Do not modify any files."
+                            ),
+                        })
                         continue
                 messages.append({"role": "user", "content": "Error:\n" + last_tool_result[:400] + "\n\nFix the error and try again."})
                 continue
@@ -974,7 +1018,10 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                 history.append({"role": "assistant",  "content": _confirm})
                 return _confirm, history
             else:
-                messages.append({"role": "user", "content": "Tool result: " + last_tool_result[:500] + "\nNext action or final answer:"})
+                # 2000 chars gives the model enough content to work with.
+                # patch_file [PATCH_FAILED] responses include file content that
+                # the model needs to reconstruct a correct write_file call.
+                messages.append({"role": "user", "content": "Tool result: " + last_tool_result[:2000] + "\nNext action or final answer:"})
             continue
         false_file, false_run = is_hallucination(response, user_message, tools_used)
         if (false_file or false_run) and hallucination_count == 0:

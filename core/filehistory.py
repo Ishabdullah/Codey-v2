@@ -9,9 +9,11 @@ from datetime import datetime
 from utils.logger import success, warning, info
 
 # In-memory history: path -> list of (timestamp, content) tuples
-# Most recent last
+# Most recent last.  Reduced from 5 to 2 — on a phone, 5 full copies
+# of a 500-line file is ~50KB that never gets freed.  /undo only needs
+# the last 1-2 versions in practice.
 _history: dict[str, list[tuple[str, str]]] = {}
-MAX_VERSIONS = 5  # keep last 5 versions per file
+MAX_VERSIONS = 2
 
 def snapshot(path: str) -> bool:
     """

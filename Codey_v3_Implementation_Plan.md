@@ -19,7 +19,7 @@
 |              | architecture |                   | queue            |
 +--------------+--------------+-------------------+------------------+
 
-**Built on:** Codey-v2.6.9 (Ishabdullah/Codey-v2) \| **Platform:**
+**Built on:** Codey-v2.7.0 (Ishabdullah/Codey-v2) \| **Platform:**
 Android / Termux / S24 Ultra
 
 **1. Vision & Core Philosophy**
@@ -1243,6 +1243,20 @@ and PeerResult output.
 | \'qwen\': \[\'qwen-cli\'\],                                     |
 |                                                                 |
 | }                                                               |
+|                                                                 |
+| # ⚠️  SECURITY NOTE (audit finding M9, 2026-03-26)             |
+| # --dangerously-skip-permissions and --yolo disable ALL tool    |
+| # confirmation prompts in Claude Code / Gemini CLI.             |
+| # This makes Codey-v3 an orchestrator that can trigger          |
+| # arbitrary file writes and shell commands via sub-agents with  |
+| # no user confirmation.                                         |
+| # Before implementing:                                          |
+| #  1. Add explicit per-session user consent before first use    |
+| #     (mirrors v2.7.0 C4 peer-delegation consent gate).         |
+| #  2. Default to flags WITHOUT permission bypass; require       |
+| #     explicit --unsafe-peers opt-in to enable them.            |
+| #  3. Log every peer dispatch with task, peer name, and flags   |
+| #     used so users can audit what was delegated.               |
 |                                                                 |
 | def is_available(self, peer: str) -\> bool:                     |
 |                                                                 |

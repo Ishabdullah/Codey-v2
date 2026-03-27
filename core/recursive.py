@@ -229,6 +229,11 @@ def _strip_tool_calls(text: str) -> str:
     return cleaned.strip()
 
 
+def _has_tool_call(text: str) -> bool:
+    """Return True if the text contains a <tool> call block."""
+    return bool(re.search(r'<tool>', text))
+
+
 def _log_phase(label: str, pass_num: int, max_depth: int) -> None:
     """Print a dim phase indicator via the standard logger."""
     info(f"[Recursive] {label} ({pass_num}/{max_depth})")
@@ -297,6 +302,31 @@ def recursive_infer(
 
     if not draft or draft.startswith("[ERROR]"):
         return draft  # propagate immediately
+
+    # Pre-critique: if the step is an action that requires a tool call but the
+    # draft contains no <tool> block, the model hallucinated the action (wrote
+    # "I created the file" instead of calling write_file). Force one retry with
+    # an explicit instruction before entering the critique loop.
+    if (user_message
+            and any(k in user_message.lower() for k in _ACTION_KEYWORDS)
+            and not _has_tool_call(draft)):
+        warning("[Recursive] No tool call found for action step — forcing tool retry")
+        _retry_msgs = messages + [
+            {"role": "assistant", "content": draft},
+            {
+                "role": "user",
+                "content": (
+                    "You described an action but did not call any tool. "
+                    "Output ONLY a <tool> call to perform the action. "
+                    "No explanatory text — just the tool call."
+                ),
+            },
+        ]
+        try:
+            draft = infer(_retry_msgs, stream=stream,
+                          extra_stop=extra_stop, show_thinking=True)
+        except Exception as _e:
+            warning(f"[Recursive] Tool retry failed: {_e}")
 
     # ── Steps 2…N: Critique + optionally refine ───────────────────────────────
     for cycle in range(1, max_depth + 1):

@@ -35,8 +35,6 @@ mkdir -p "$DAEMON_DIR"
 show_status() {
     local main_running=false
     local main_pid=""
-    local plann_running=false
-    local plann_pid=""
 
     # Check main daemon
     if [ -f "$PID_FILE" ]; then
@@ -49,17 +47,6 @@ show_status() {
         fi
     fi
 
-    # Check plannd
-    if [ -f "$PLANND_PID_FILE" ]; then
-        plann_pid=$(cat "$PLANND_PID_FILE" 2>/dev/null || echo "")
-        if [ -n "$plann_pid" ] && kill -0 "$plann_pid" 2>/dev/null; then
-            plann_running=true
-        else
-            rm -f "$PLANND_PID_FILE"
-            plann_pid=""
-        fi
-    fi
-
     # Print daemon status
     if $main_running; then
         printf "Main daemon:    running  (PID %s)\n" "$main_pid"
@@ -67,13 +54,7 @@ show_status() {
         printf "Main daemon:    stopped\n"
     fi
 
-    if $plann_running; then
-        printf "Planner daemon: running  (PID %s)\n" "$plann_pid"
-    else
-        printf "Planner daemon: stopped\n"
-    fi
-
-    # Check model server ports and print model status via Python
+    # Check model server port and print model status via Python
     python3 - <<PYEOF
 import sys, urllib.request
 sys.path.insert(0, "$CODEY_V2_DIR")
@@ -98,10 +79,7 @@ if port_healthy(8080):
 else:
     print("7B model:       not loaded")
 
-if port_healthy(8081):
-    print("Planner model:  ready")
-else:
-    print("Planner model:  not loaded")
+print("Planner:        7B self-planning (port 8080)")
 PYEOF
 
     if $main_running; then
@@ -136,6 +114,7 @@ start_daemon() {
 
     # Create launcher script
     TMPSCRIPT="$(mktemp "$DAEMON_DIR/daemon_run_XXXX.py")"
+    trap 'rm -f "${TMPSCRIPT:-}"' ERR
 
     cat > "$TMPSCRIPT" << PYEOF
 import sys
@@ -223,6 +202,7 @@ start_plannd() {
     sleep 0.5
 
     TMPSCRIPT="$(mktemp "$DAEMON_DIR/plannd_run_XXXX.py")"
+    trap 'rm -f "${TMPSCRIPT:-}"' ERR
 
     cat > "$TMPSCRIPT" << PYEOF
 import sys
@@ -291,11 +271,9 @@ stop_plannd() {
 # ── Combined operations ────────────────────────────────────────────────────────
 
 restart_all() {
-    stop_plannd || true
-    stop_daemon  || true
+    stop_daemon || true
     sleep 1
     start_daemon
-    start_plannd || true
 }
 
 reload_daemon() {
@@ -322,13 +300,11 @@ reload_daemon() {
 case "${1:-status}" in
     start)
         start_daemon
-        start_plannd || true
         echo ""
         show_status || true
         ;;
     stop)
-        stop_plannd || true
-        stop_daemon  || true
+        stop_daemon || true
         ;;
     status)
         show_status
@@ -352,7 +328,7 @@ path = create_default_config()
 print(f"Default config created at: {path}")
 PYEOF
 
-        python3 "$TMPSCRIPT"
+        python3 "$TMPSCRIPT" || { rm -f "$TMPSCRIPT"; exit 1; }
         rm -f "$TMPSCRIPT"
         ;;
     *)

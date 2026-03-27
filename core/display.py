@@ -24,7 +24,11 @@ def show_thinking():
     )
 
 def show_file_write(path, content, old_content=None):
-    """Show a file write as a syntax-highlighted panel."""
+    """Show a file write as a syntax-highlighted panel.
+
+    Memory-conscious: caps preview at 40 lines, diff at 60 lines.
+    Caller should `del old_content` immediately after this returns.
+    """
     fname = Path(path).name
     ext = Path(path).suffix.lstrip('.')
     lang_map = {
@@ -33,14 +37,20 @@ def show_file_write(path, content, old_content=None):
         'yaml': 'yaml', 'yml': 'yaml', 'toml': 'toml',
     }
     lang = lang_map.get(ext, 'text')
+    lines_count = content.count('\n') + 1
     if old_content:
-        # Show as diff
-        old_lines = old_content.splitlines(keepends=True)
-        new_lines = content.splitlines(keepends=True)
+        # Show as diff — cap inputs to avoid huge difflib allocations
+        _MAX_DIFF_LINES = 200
+        old_lines = old_content.splitlines(keepends=True)[:_MAX_DIFF_LINES]
+        new_lines = content.splitlines(keepends=True)[:_MAX_DIFF_LINES]
         diff = list(difflib.unified_diff(old_lines, new_lines, lineterm=''))
         if diff:
             diff_text = Text()
+            shown = 0
             for line in diff[2:]:  # skip --- +++ headers
+                if shown >= 60:
+                    diff_text.append(f'... ({len(diff) - 2 - shown} more diff lines)\n', style='dim')
+                    break
                 if line.startswith('+'):
                     diff_text.append(line + '\n', style='green')
                 elif line.startswith('-'):
@@ -49,12 +59,15 @@ def show_file_write(path, content, old_content=None):
                     diff_text.append(line + '\n', style='cyan')
                 else:
                     diff_text.append(line + '\n', style='dim')
+                shown += 1
             console.print(Panel(diff_text, title=f'Editing {fname}',
                                border_style='yellow', box=box.ROUNDED))
         return
-    # New file — show with syntax highlighting
-    lines_count = len(content.splitlines())
-    preview = content if lines_count <= 40 else '\n'.join(content.splitlines()[:40]) + f'\n... ({lines_count - 40} more lines)'
+    # New file — cap preview before passing to Syntax to avoid Pygments bloat
+    if lines_count <= 40:
+        preview = content
+    else:
+        preview = '\n'.join(content.splitlines()[:40]) + f'\n... ({lines_count - 40} more lines)'
     syntax = Syntax(preview, lang, theme='monokai', line_numbers=True)
     console.print(Panel(syntax, title=f'Creating {fname}',
                        border_style='green', box=box.ROUNDED))

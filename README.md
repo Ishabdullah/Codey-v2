@@ -73,7 +73,7 @@ All three run as independent llama-server processes, managed and watchdog-monito
 - **RAG retrieval** — local knowledge base searched on every inference call; relevant docs injected automatically
 - **Recursive self-refinement** — draft → critique → refine cycle catches bugs before they hit your files
 - **Error recovery** — adaptive strategy switching when tools fail (write → patch, import error → install, etc.)
-- **Peer CLI escalation** — calls Claude Code, Gemini CLI, or Qwen CLI when retry budget is exhausted
+- **Peer CLI escalation** — calls Claude Code, Gemini CLI, or Qwen CLI when retry budget is exhausted (external services; requires API keys and explicit user consent before local files are shared — see [Security](docs/security.md))
 - **Git integration** — branch management, AI commit messages, conflict detection and resolution
 - **Voice interface** — TTS output and STT input via Termux:API
 - **Static analysis** — auto-lint on every Python write; `/review` command for on-demand scans
@@ -104,7 +104,7 @@ All three run as independent llama-server processes, managed and watchdog-monito
 |-|-|
 | **Platform** | Termux on Android, or any Linux system |
 | **RAM** | 6 GB+ available |
-| **Storage** | ~10 GB |
+| **Storage** | ~6 GB (7B model ~4.2 GB, 0.5B ~500 MB, embed ~80 MB, toolchain ~1 GB) |
 | **Python** | 3.12+ |
 
 ---

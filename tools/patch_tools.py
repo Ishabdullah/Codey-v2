@@ -27,12 +27,16 @@ def tool_patch_file(path: str, old_str: str, new_str: str) -> str:
 
     count = content.count(old_str)
     if count == 0:
-        # Give helpful context
+        # old_str not found — model's context may be stale.  Return the current
+        # file content so the model can reconstruct the correct patch or fall back
+        # to write_file with the full intended content instead of retrying blindly.
         lines = content.splitlines()
         return (
-            f"[ERROR] String not found in {path}.\n"
-            f"File has {len(lines)} lines. "
-            f"Make sure the old_str matches exactly including whitespace."
+            f"[PATCH_FAILED] old_str not found in {path} ({len(lines)} lines).\n"
+            "The file may have changed since you last read it. "
+            "Use write_file with the complete intended content, or re-read the file "
+            "and issue a corrected patch.\n"
+            f"Current file content:\n{content}"
         )
     
     if count > 1:
@@ -72,8 +76,11 @@ def tool_patch_file(path: str, old_str: str, new_str: str) -> str:
 
     snapshot(str(p))
     try:
-        p.write_text(new_content, encoding="utf-8")
-        changed_lines = abs(len(new_content.splitlines()) - len(content.splitlines()))
+        # Route through Filesystem layer for workspace boundary and safety enforcement
+        from core.filesystem import get_filesystem, FilesystemAccessError
+        get_filesystem().write(str(p), new_content)
         return f"Patched {path} ({len(old_str)} chars → {len(new_str)} chars)"
+    except FilesystemAccessError as e:
+        return f"[ERROR] {e}"
     except Exception as e:
         return f"[ERROR] Could not write {path}: {e}"

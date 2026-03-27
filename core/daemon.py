@@ -137,13 +137,36 @@ class DaemonServer:
                 from core.planner_client import send_plan_request_async
                 steps = await asyncio.wait_for(
                     send_plan_request_async(prompt),
-                    timeout=45.0,
+                    timeout=180.0,
                 )
                 if steps and len(steps) > 1:
-                    task_ids = [] if data.get("plan_only", False) else self.planner.add_tasks(steps)
-                    if data.get("plan_only"):
+                    if data.get("plan_only", False):
+                        task_ids = []
                         info(f"plannd: returned {len(steps)}-step plan (plan_only)")
                     else:
+                        # Inject original prompt into step 1 (the create step)
+                        # so the executor has full requirements context.
+                        # Later steps (run/verify) are usually self-contained
+                        # and don't need the full prompt — just the step.
+                        total = len(steps)
+                        enriched = []
+                        for i, step in enumerate(steps):
+                            if i == 0:
+                                # Step 1: full context — the executor needs
+                                # all requirements to write the code
+                                enriched.append(
+                                    f"User's full request: {prompt}\n\n"
+                                    f"Your task (step {i+1}/{total}): {step}\n\n"
+                                    "Write the COMPLETE file with ALL features "
+                                    "described above. Do not skip any requirement."
+                                )
+                            else:
+                                enriched.append(
+                                    f"Previous context: {prompt[:200]}\n\n"
+                                    f"Your task (step {i+1}/{total}): {step}\n\n"
+                                    "Complete only this step."
+                                )
+                        task_ids = self.planner.add_tasks(enriched)
                         info(f"plannd: queued {len(steps)}-step plan")
                     return {
                         "status": "ok",
@@ -373,6 +396,8 @@ class Daemon:
         self.executor = TaskExecutor(self.state, self._config)
         from core.planner_v2 import get_planner
         self.planner = get_planner()
+        # Give DaemonServer access to the planner so _handle_command can queue steps.
+        self.server.planner = self.planner
         from core.background import get_background_manager, get_file_watch_manager
         self.background = get_background_manager()
         self.file_watch = get_file_watch_manager()
@@ -382,6 +407,29 @@ class Daemon:
         # Register signal handlers
         signal.signal(signal.SIGTERM, self._handle_sigterm)
         signal.signal(signal.SIGUSR1, self._handle_sigusr1)
+
+        # Wire ProjectMemory: load CODEY.md and config.json at boot (never evicted)
+        try:
+            from core.memory import memory as _mem
+            from core.codeymd import find_codeymd, read_codeymd
+            from pathlib import Path as _Path
+
+            # Load CODEY.md if it exists
+            _codeymd_path = find_codeymd()
+            if _codeymd_path:
+                _codeymd_content = read_codeymd()
+                if _codeymd_content and not _codeymd_content.startswith("[ERROR]"):
+                    _mem.add_to_project(_codeymd_path, _codeymd_content, is_protected=True)
+                    info(f"ProjectMemory: loaded {_codeymd_path}")
+
+            # Load config.json if it exists
+            _config_path = _Path.home() / ".codey-v2" / "config.json"
+            if _config_path.exists():
+                _config_content = _config_path.read_text(encoding="utf-8", errors="replace")
+                _mem.add_to_project(str(_config_path), _config_content, is_protected=True)
+                info(f"ProjectMemory: loaded {_config_path}")
+        except Exception as _e:
+            warning(f"ProjectMemory initialization skipped: {_e}")
 
     def _trigger_shutdown(self):
         """Called by DaemonServer when a socket shutdown command is received."""

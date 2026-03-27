@@ -36,6 +36,15 @@ WRITE_PROTECTED = {
     ".env",
 }
 
+# Text source file extensions that receive \" → " decode on write.
+# The 7B model sometimes double-encodes JSON, leaving literal \" in content.
+# Excluded: .json (\" is valid JSON escaping), .sh (\" is a shell escape).
+_DECODE_EXTS = {
+    '.py', '.js', '.ts', '.jsx', '.tsx',
+    '.html', '.css', '.txt', '.md',
+    '.yaml', '.yml', '.toml', '.ini', '.cfg',
+}
+
 # Global filesystem instance
 _fs: Filesystem = None
 _fs_allow_self_mod: bool = False
@@ -134,6 +143,9 @@ def tool_write_file(path: str, content: str) -> str:
         log_warning(f"About to overwrite: {path}")
         if not ask_confirm(f"Overwrite {path}?"):
             return f"[CANCELLED] Overwrite of {path} cancelled."
+
+    if p.suffix.lower() in _DECODE_EXTS:
+        content = content.replace('\\"', '"')
 
     try:
         return _get_fs().write(path, content)

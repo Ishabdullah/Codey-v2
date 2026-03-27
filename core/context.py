@@ -161,7 +161,7 @@ _SELF_REVIEW_KEYWORDS = [
 _SELF_REVIEW_FILES = [
     "core/agent.py",
     "utils/config.py",
-    "core/memory.py",
+    "core/memory_v2.py",
     "tools/file_tools.py",
     "prompts/system_prompt.py",
 ]

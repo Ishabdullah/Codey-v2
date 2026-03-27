@@ -11,7 +11,7 @@ from pathlib import Path
 from utils.config import MODEL_CONFIG, MODEL_PATH, LLAMA_SERVER_BIN, LLAMA_LIB
 from utils.logger import error, info
 
-SERVER_URL       = "http://127.0.0.1:8081"
+SERVER_URL       = "http://127.0.0.1:8080"  # 7B primary server (port 8081 = plannd)
 CHAT_URL         = f"{SERVER_URL}/v1/chat/completions"
 HEALTH_URL       = f"{SERVER_URL}/health"
 
@@ -62,7 +62,7 @@ def _start_server():
         "--cache-type-k", cfg["kv_type"],
         "--cache-type-v", cfg["kv_type"],
         "--flash-attn", "on",  # fused attention kernel, 10-20% faster prefill
-        "--port",         "8081",
+        "--port",         "8080",  # was 8081 — collided with plannd/summarizer
         "--log-disable",
     ]
 

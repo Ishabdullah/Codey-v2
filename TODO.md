@@ -1,7 +1,7 @@
 # Codey-v2 — Remaining Work
 
-**Last updated:** 2026-03-17
-**Current version:** v2.6.8
+**Last updated:** 2026-03-26
+**Current version:** v2.7.0
 
 All planned roadmap phases are complete (Recursive LM Phases 1-8, Upgrade Phases 1-3).
 Items below are collected from all prior planning docs and represent potential future work.
@@ -11,7 +11,7 @@ Items below are collected from all prior planning docs and represent potential f
 ## High Priority
 
 ### Tests
-- [ ] Create `tests/` directory with unit tests
+- [x] Create `tests/` directory with unit tests (done — 57 tests passing)
 - [ ] `test_extract_json` — malformed JSON parsing
 - [ ] `test_is_hallucination` — false claim detection
 - [ ] `test_classify_breadth_need` — task complexity classification

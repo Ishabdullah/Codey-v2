@@ -17,7 +17,7 @@
 
 | Command | Description |
 |---------|-------------|
-| `codey2 "prompt"` | Send a task to the running daemon |
+| `codey2 "prompt"` | Send a task to the running daemon, or run standalone if no daemon is active |
 | `codey2 status` | Show full system status |
 | `codey2 task list` | List recent tasks and their state |
 | `codey2 task <id>` | Get full details of a specific task |
@@ -79,6 +79,12 @@
 | Command | Description |
 |---------|-------------|
 | `/review <file.py>` | Lint with all available tools and offer agent fix |
+
+### Knowledge Base
+
+| Command | Description |
+|---------|-------------|
+| `/rag <prompt>` | Show what the KB would retrieve and inject for a given prompt |
 
 ### Voice
 

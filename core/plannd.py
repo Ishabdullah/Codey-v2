@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# DEPRECATED — replaced by 7B self-planning in planner_client.py
 """
 plannd — Planner Daemon for Codey-v2
 
@@ -38,18 +39,17 @@ SOCKET_FILE = DAEMON_DIR / "plannd.sock"
 SERVER_HOST = "127.0.0.1"
 SERVER_PORT = 8081
 
-# The exact system prompt requested — do not modify without updating config docs.
+# DeepSeek 1.5B planner prompt (used when PLANNER_USE_7B=False).
 PLANNER_SYSTEM_PROMPT = (
-    "You are a task planner. Your only job is to break the following "
-    "request into a precise numbered checklist of steps for a coding "
-    "assistant to execute one at a time.\n\n"
+    "You are a task planner. Break the request into a numbered "
+    "checklist of 3-5 steps for a coding assistant.\n\n"
     "Rules:\n"
-    "- Each step is one single concrete action\n"
-    "- Steps must be in the correct order\n"
-    "- Include a run or verify step after every file that is created\n"
-    "- Include a test step after any code is written\n"
-    "- Never write code yourself\n"
-    "- Never explain anything\n"
+    "- Step 1 must repeat the specific requirements (what the "
+    "script must do), not just say 'create X'\n"
+    "- Run steps must include the exact command and arguments\n"
+    "- Include specific filenames from the user's request\n"
+    "- Each step is one concrete action\n"
+    "- Never write code, never explain, never suggest IDEs\n"
     "- Output the numbered list only and nothing else"
 )
 
@@ -74,7 +74,100 @@ def parse_steps(raw: str) -> List[str]:
             step = m.group(2).strip()
             if step:
                 steps.append(step)
+    if steps:
+        last = steps[-1]
+        if last and last[-1] not in ".!?)" and last[-1].isalpha():
+            print(
+                "plannd: plan may be truncated — consider increasing n_predict",
+                flush=True,
+            )
     return steps
+
+
+# ── 7B self-planning (replaces plannd socket) ────────────────────────────────
+
+_7B_PLANNER_SYSTEM_PROMPT = (
+    "You are a task planner for an AI coding assistant.\n\n"
+    "Tools available:\n"
+    "- write_file: creates a complete file in one operation\n"
+    "- patch_file: modifies specific lines in an existing file\n"
+    "- shell: runs any terminal command\n"
+    "- read_file: reads a file's contents\n\n"
+    "Create a plan of 3 to 5 steps. Each step = one tool call.\n\n"
+    "CRITICAL RULES:\n"
+    "- Step 1 MUST repeat the specific requirements from the "
+    "user's request. Do NOT say 'with all required functionality' "
+    "— instead list what the script must do. Example:\n"
+    "  BAD:  'Create app.py with all required functionality'\n"
+    "  GOOD: 'Create app.py that accepts a filename argument, "
+    "counts words/lines/characters, saves results to output.json "
+    "with timestamps, and prints a summary'\n"
+    "- Never split coding into multiple write_file steps — "
+    "the entire script is written in one step\n"
+    "- Run steps MUST specify the exact command with the correct "
+    "filename and arguments. Example:\n"
+    "  BAD:  'Run the script using the shell tool'\n"
+    "  GOOD: 'Run: python wordcount.py fibonacci.py'\n"
+    "- If the user says to run on a specific file, use THAT file\n"
+    "- If the user asks to run something twice or verify multiple "
+    "runs, add separate run steps for each\n"
+    "- The last step should verify the specific expected outcome "
+    "from the user's request, not just 'verify output is correct'\n"
+    "- Never suggest IDEs, online tools, or text editors\n"
+    "- Output the numbered list only and nothing else"
+)
+
+
+def get_plan_from_7b(prompt: str) -> Optional[List[str]]:
+    """
+    Ask the Qwen 7B model on port 8080 to break *prompt* into a numbered plan.
+
+    Makes a direct HTTP call to the llama-server /v1/chat/completions endpoint
+    with a planning-specific system prompt, low temperature (0.2), and a
+    tight token budget (256).  Returns the parsed step list, or None on any
+    failure so the caller can fall through to direct execution.
+    """
+    try:
+        from utils.config import PLANNER_TEMPERATURE, PLANNER_MAX_TOKENS
+        temperature = PLANNER_TEMPERATURE
+        max_tokens  = PLANNER_MAX_TOKENS
+    except ImportError:
+        temperature = 0.2
+        max_tokens  = 256
+
+    payload = {
+        "model": "codey",
+        "messages": [
+            {"role": "system", "content": _7B_PLANNER_SYSTEM_PROMPT},
+            {"role": "user",   "content": prompt},
+        ],
+        "max_tokens": max_tokens,
+        "temperature": temperature,
+        "stream": False,
+    }
+
+    url = f"http://127.0.0.1:8080/v1/chat/completions"
+    req = urllib.request.Request(
+        url,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=165) as response:
+            result = json.loads(response.read().decode("utf-8"))
+            choices = result.get("choices", [])
+            if not choices:
+                return None
+            raw = choices[0].get("message", {}).get("content", "").strip()
+            if not raw:
+                return None
+            steps = parse_steps(raw)
+            return steps if steps else None
+    except Exception as e:
+        print(f"[plannd] get_plan_from_7b error: {e}", flush=True)
+        return None
 
 
 # ── DeepSeek llama-server wrapper ────────────────────────────────────────────
@@ -121,13 +214,13 @@ class DeepSeekServer:
                 "-m", str(self.model_path),
                 "--host", SERVER_HOST,
                 "--port", str(self.port),
-                "-c", "8192",       # 8K context — enough for planning
+                "-c", "4096",       # 4K context — sufficient for planning, lower memory overhead
                 "-t", "4",          # 4 threads
                 "--temp", "0.3",    # Low temperature for deterministic plans
                 "--top-p", "0.9",
                 "--top-k", "20",
                 "--repeat-penalty", "1.1",
-                "--n-predict", "512",   # Plans are short
+                "--n-predict", "1024",  # Plans need room for multi-step tasks
                 "--flash-attn", "on",
                 # Do NOT add --mmap — short-lived process, not worth it
             ]
@@ -230,13 +323,14 @@ class DeepSeekServer:
         payload = {
             "model": "plannd",
             "messages": messages,
-            "max_tokens": 512,
+            "max_tokens": 1024,
             "temperature": 0.3,
             "top_p": 0.9,
             "top_k": 20,
             "repeat_penalty": 1.1,
             "stop": ["<|im_end|>", "<|im_start|>", "\nUser:", "\nHuman:"],
             "stream": False,
+            "cache_prompt": False,
         }
 
         url = f"http://{SERVER_HOST}:{self.port}/v1/chat/completions"

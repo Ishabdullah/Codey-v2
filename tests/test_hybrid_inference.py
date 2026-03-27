@@ -1,14 +1,13 @@
 #!/usr/bin/env python3
 """
-Tests for Codey-v2 hybrid inference backend (v2.4.0).
+Tests for Codey-v2 inference backend (v2.7.0).
 
-Tests:
-- Backend initialization and fallback
-- Direct binding availability detection
-- Unix socket backend
-- TCP HTTP backend
-- Hybrid backend manager
-- Latency tracking
+Tests the current ChatCompletionBackend (single HTTP backend using
+llama-server's /v1/chat/completions endpoint on port 8080).
+
+The v2.4.0 three-backend architecture (DirectBindingBackend, TcpHttpBackend,
+UnixSocketBackend, HybridInferenceBackend) was removed. This file was rewritten
+to reflect the current single-backend architecture.
 """
 
 import sys
@@ -16,213 +15,103 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from core.inference_hybrid import (
-    DirectBindingBackend,
-    UnixSocketBackend,
-    TcpHttpBackend,
-    HybridInferenceBackend,
-    BackendStats,
+    ChatCompletionBackend,
     get_hybrid_backend,
     reset_hybrid_backend,
 )
 
 
-class TestDirectBindingBackend:
-    """Test direct llama-cpp-python binding backend."""
-
-    def test_initialize_unavailable(self):
-        """Direct binding should be unavailable on Termux/Android."""
-        backend = DirectBindingBackend()
-        result = backend.initialize()
-        
-        # On Termux/Android, this should return False
-        # On desktop with llama-cpp-python installed, might return True
-        assert isinstance(result, bool)
-        assert backend._available == result
-        
-        if not result:
-            # Should have an error message
-            assert backend._init_error is not None
+class TestChatCompletionBackend:
+    """Test the HTTP /v1/chat/completions backend."""
 
     def test_backend_name(self):
-        """Backend should have correct name."""
-        backend = DirectBindingBackend()
-        assert backend.backend_name == "direct"
-
-    def test_is_loaded_initially_false(self):
-        """Should not have model loaded initially."""
-        backend = DirectBindingBackend()
-        backend.initialize()
-        assert backend.is_loaded == False
-
-
-class TestTcpHttpBackend:
-    """Test TCP HTTP backend (original fallback)."""
-
-    def test_backend_name(self):
-        """Backend should have correct name."""
-        backend = TcpHttpBackend()
-        assert backend.backend_name == "tcp_http"
+        """Backend should report the correct name."""
+        backend = ChatCompletionBackend()
+        assert backend.backend_name == "chat_completions"
 
     def test_default_host_port(self):
-        """Should use default host and port."""
-        backend = TcpHttpBackend()
+        """Should default to localhost:8080."""
+        backend = ChatCompletionBackend()
         assert backend._host == "127.0.0.1"
         assert backend._port == 8080
 
     def test_custom_host_port(self):
         """Should accept custom host and port."""
-        backend = TcpHttpBackend(host="192.168.1.100", port=9000)
-        assert backend._host == "192.168.1.100"
+        backend = ChatCompletionBackend(host="192.168.1.10", port=9000)
+        assert backend._host == "192.168.1.10"
         assert backend._port == 9000
 
+    def test_base_url_constructed(self):
+        """Base URL should be derived from host and port."""
+        backend = ChatCompletionBackend(host="127.0.0.1", port=8080)
+        assert backend._base_url == "http://127.0.0.1:8080"
 
-class TestUnixSocketBackend:
-    """Test Unix domain socket backend."""
+    def test_calls_initially_zero(self):
+        """Call counter should start at zero."""
+        backend = ChatCompletionBackend()
+        assert backend._calls_made == 0
 
-    def test_backend_name(self):
-        """Backend should have correct name."""
-        backend = UnixSocketBackend()
-        assert backend.backend_name == "unix_socket"
+    def test_check_health_returns_bool(self):
+        """check_health() should return a bool (False when server not running)."""
+        backend = ChatCompletionBackend()
+        result = backend.check_health()
+        assert isinstance(result, bool)
 
-    def test_default_socket_path(self):
-        """Should use default socket path."""
-        backend = UnixSocketBackend()
-        assert "llama.sock" in backend._socket_path
+    def test_is_server_running_returns_bool(self):
+        """is_server_running() should return a bool."""
+        backend = ChatCompletionBackend()
+        result = backend.is_server_running()
+        assert isinstance(result, bool)
 
-    def test_custom_socket_path(self):
-        """Should accept custom socket path."""
-        backend = UnixSocketBackend(socket_path="/tmp/custom.sock")
-        assert backend._socket_path == "/tmp/custom.sock"
-
-
-class TestHybridInferenceBackend:
-    """Test hybrid backend manager."""
-
-    def setup_method(self):
-        """Reset before each test."""
-        reset_hybrid_backend()
-
-    def test_initialize_selects_backend(self):
-        """Should initialize and select best available backend."""
-        hybrid = HybridInferenceBackend()
-        backend_name = hybrid.initialize()
-        
-        # Should return one of the available backends
-        assert backend_name in ["direct", "unix_socket", "tcp_http"]
-        assert hybrid._active_backend is not None
-
-    def test_stats_tracking(self):
-        """Should track backend statistics."""
-        hybrid = HybridInferenceBackend()
-        hybrid.initialize()
-        
-        stats = hybrid.get_stats()
-        
+    def test_get_stats_structure(self):
+        """get_stats() should return a dict with expected keys."""
+        backend = ChatCompletionBackend()
+        stats = backend.get_stats()
+        assert isinstance(stats, dict)
         assert "active_backend" in stats
-        assert "backends" in stats
-        assert isinstance(stats["backends"], dict)
-
-    def test_fallback_chain(self):
-        """Should have proper fallback chain."""
-        hybrid = HybridInferenceBackend(prefer_unix_socket=True)
-        hybrid.initialize()
-        
-        # Check that stats are tracked for initialized backends
-        stats = hybrid.get_stats()
-        
-        # At minimum, one backend should be available
-        assert len(stats["backends"]) >= 1
-        
-        # Direct binding should be unavailable on Termux
-        if "direct" in stats["backends"]:
-            assert stats["backends"]["direct"]["available"] == False
-        
-        # Unix socket or tcp_http should be available as fallback
-        available_backends = [
-            name for name, s in stats["backends"].items() 
-            if s["available"]
-        ]
-        assert len(available_backends) >= 1
-
-    def test_unload_model(self):
-        """Should unload model cleanly."""
-        hybrid = HybridInferenceBackend()
-        hybrid.initialize()
-        
-        # Unload should not raise even if no model loaded
-        hybrid.unload_model()
+        assert stats["active_backend"] == "chat_completions"
+        assert "host" in stats
+        assert "port" in stats
+        assert "calls_made" in stats
+        assert stats["calls_made"] == 0
 
 
-class TestBackendStats:
-    """Test backend statistics dataclass."""
-
-    def test_create_stats(self):
-        """Should create stats object."""
-        stats = BackendStats(
-            backend_name="test",
-            init_success=True
-        )
-        
-        assert stats.backend_name == "test"
-        assert stats.init_success == True
-        assert stats.init_error is None
-        assert stats.avg_latency_ms == 0.0
-        assert stats.calls_made == 0
-
-    def test_stats_with_error(self):
-        """Should track init error."""
-        stats = BackendStats(
-            backend_name="test",
-            init_success=False,
-            init_error="Test error message"
-        )
-        
-        assert stats.init_success == False
-        assert stats.init_error == "Test error message"
-
-
-class TestGlobalBackend:
-    """Test global backend singleton."""
+class TestGlobalBackendSingleton:
+    """Test the module-level singleton and reset functionality."""
 
     def setup_method(self):
-        """Reset before each test."""
+        """Reset singleton before each test."""
         reset_hybrid_backend()
 
-    def test_get_hybrid_backend_creates_instance(self):
-        """Should create instance on first call."""
+    def test_get_hybrid_backend_returns_instance(self):
+        """get_hybrid_backend() should return a ChatCompletionBackend."""
         backend = get_hybrid_backend()
         assert backend is not None
-        assert isinstance(backend, HybridInferenceBackend)
+        assert isinstance(backend, ChatCompletionBackend)
 
-    def test_get_hybrid_backend_returns_same_instance(self):
-        """Should return same instance on subsequent calls."""
+    def test_singleton_same_instance(self):
+        """Repeated calls should return the same instance."""
         backend1 = get_hybrid_backend()
         backend2 = get_hybrid_backend()
-        
         assert backend1 is backend2
 
-    def test_reset_hybrid_backend(self):
-        """Should reset global instance."""
+    def test_reset_creates_new_instance(self):
+        """reset_hybrid_backend() should force creation of a new instance."""
         backend1 = get_hybrid_backend()
         reset_hybrid_backend()
         backend2 = get_hybrid_backend()
-        
-        # Should be different instances after reset
         assert backend1 is not backend2
 
+    def test_prefer_unix_socket_ignored(self):
+        """prefer_unix_socket kwarg is accepted for compat but has no effect."""
+        backend = get_hybrid_backend(prefer_unix_socket=True)
+        assert isinstance(backend, ChatCompletionBackend)
 
-class TestBackendLatencyTracking:
-    """Test backend latency tracking."""
-
-    def test_latency_initialized_zero(self):
-        """Latency should start at zero."""
-        stats = BackendStats(backend_name="test", init_success=True)
-        assert stats.avg_latency_ms == 0.0
-
-    def test_calls_initialized_zero(self):
-        """Call count should start at zero."""
-        stats = BackendStats(backend_name="test", init_success=True)
-        assert stats.calls_made == 0
+    def test_reset_then_check_backend_name(self):
+        """After reset, new backend should still have correct name."""
+        reset_hybrid_backend()
+        backend = get_hybrid_backend()
+        assert backend.backend_name == "chat_completions"
 
 
 if __name__ == "__main__":

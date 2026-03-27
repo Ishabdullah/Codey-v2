@@ -36,15 +36,15 @@ CODEY_V2_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 LLAMA_CPP_DIR="$HOME/llama.cpp"
 MODELS_DIR="$HOME/models"
 PRIMARY_MODEL_DIR="$MODELS_DIR/qwen2.5-coder-7b"
-SECONDARY_MODEL_DIR="$MODELS_DIR/qwen2.5-1.5b"
+SECONDARY_MODEL_DIR="$MODELS_DIR/qwen2.5-0.5b"
 EMBED_MODEL_DIR="$MODELS_DIR/nomic-embed"
 PRIMARY_MODEL_FILE="qwen2.5-coder-7b-instruct-q4_k_m.gguf"
-SECONDARY_MODEL_FILE="qwen2.5-1.5b-instruct-q8_0.gguf"
+SECONDARY_MODEL_FILE="qwen2.5-0.5b-instruct-q8_0.gguf"
 EMBED_MODEL_FILE="nomic-embed-text-v1.5.Q4_K_M.gguf"
 
 # URLs for model downloads (HuggingFace)
 PRIMARY_MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-Coder-7B-Instruct-GGUF/resolve/main/qwen2.5-coder-7b-instruct-q4_k_m.gguf"
-SECONDARY_MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-1.5B-Instruct-GGUF/resolve/main/qwen2.5-1.5b-instruct-q8_0.gguf"
+SECONDARY_MODEL_URL="https://huggingface.co/Qwen/Qwen2.5-0.5B-Instruct-GGUF/resolve/main/qwen2.5-0.5b-instruct-q8_0.gguf"
 EMBED_MODEL_URL="https://huggingface.co/nomic-ai/nomic-embed-text-v1.5-GGUF/resolve/main/nomic-embed-text-v1.5.Q4_K_M.gguf"
 
 echo -e "${BLUE}"
@@ -259,22 +259,22 @@ download_models() {
         MODELS_NEED_DOWNLOAD=true
     fi
 
-    # Check secondary model (1.5B)
+    # Check secondary model (0.5B summarizer)
     SECONDARY_MODEL_PATH="$SECONDARY_MODEL_DIR/$SECONDARY_MODEL_FILE"
     if [ -f "$SECONDARY_MODEL_PATH" ]; then
         # Check if file is complete (not partial download)
         FILE_SIZE=$(stat -c%s "$SECONDARY_MODEL_PATH" 2>/dev/null || stat -f%z "$SECONDARY_MODEL_PATH" 2>/dev/null || echo 0)
-        MIN_SIZE=1000000000  # 1GB minimum for valid model
+        MIN_SIZE=200000000  # 200MB minimum for valid 0.5B model
 
         if [ "$FILE_SIZE" -gt "$MIN_SIZE" ]; then
-            print_success "Secondary model (1.5B) already exists ($(numfmt --to=iec-i --suffix=B $FILE_SIZE 2>/dev/null || echo "${FILE_SIZE}B")), skipping..."
+            print_success "Secondary model (0.5B) already exists ($(numfmt --to=iec-i --suffix=B $FILE_SIZE 2>/dev/null || echo "${FILE_SIZE}B")), skipping..."
         else
-            print_warning "Secondary model (1.5B) exists but appears incomplete, re-downloading..."
+            print_warning "Secondary model (0.5B) exists but appears incomplete, re-downloading..."
             rm -f "$SECONDARY_MODEL_PATH"
             MODELS_NEED_DOWNLOAD=true
         fi
     else
-        print_status "Secondary model (1.5B) not found"
+        print_status "Secondary model (0.5B summarizer) not found"
         MODELS_NEED_DOWNLOAD=true
     fi
 
@@ -304,7 +304,7 @@ download_models() {
     fi
 
     echo
-    print_warning "Models will be downloaded now (~7GB total)"
+    print_warning "Models will be downloaded now (~5.5GB total)"
     print_warning "This may take 10-30 minutes depending on your connection"
     print_warning "Press Ctrl+C to skip and download models manually later"
     echo
@@ -327,14 +327,14 @@ download_models() {
         fi
     fi
 
-    # Download secondary model (1.5B)
+    # Download secondary model (0.5B summarizer)
     if [ ! -f "$SECONDARY_MODEL_PATH" ]; then
-        print_status "Downloading Secondary model (1.5B) - ~2GB..."
-        if download_file "$SECONDARY_MODEL_URL" "$SECONDARY_MODEL_PATH" "Secondary model (1.5B)"; then
+        print_status "Downloading Secondary model (0.5B summarizer) - ~500MB..."
+        if download_file "$SECONDARY_MODEL_URL" "$SECONDARY_MODEL_PATH" "Secondary model (0.5B)"; then
             # Verify download
             FILE_SIZE=$(stat -c%s "$SECONDARY_MODEL_PATH" 2>/dev/null || stat -f%z "$SECONDARY_MODEL_PATH" 2>/dev/null || echo 0)
-            if [ "$FILE_SIZE" -gt 1000000000 ]; then
-                print_success "Secondary model (1.5B) downloaded successfully"
+            if [ "$FILE_SIZE" -gt 200000000 ]; then
+                print_success "Secondary model (0.5B) downloaded successfully"
             else
                 print_error "Secondary model download appears incomplete"
                 print_warning "You can resume download later: wget -c -P $SECONDARY_MODEL_DIR $SECONDARY_MODEL_URL"
@@ -439,9 +439,9 @@ verify_installation() {
     fi
 
     if [ -f "$SECONDARY_MODEL_PATH" ]; then
-        print_success "Secondary model (1.5B): installed"
+        print_success "Secondary model (0.5B): installed"
     else
-        print_warning "Secondary model (1.5B): not downloaded"
+        print_warning "Secondary model (0.5B): not downloaded"
     fi
 
     if [ -f "$EMBED_MODEL_PATH" ]; then

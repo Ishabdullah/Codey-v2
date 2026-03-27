@@ -105,6 +105,31 @@ This clones curated skill repos into `knowledge/skills/` and indexes them. Durin
 
 ---
 
+## Inspecting Retrieval Results
+
+Use `/rag <prompt>` inside a session to see exactly what the KB would inject for any given prompt, before sending it to the model.
+
+```
+You> /rag create a Flask JWT authentication endpoint
+```
+
+Output breakdown:
+
+- **Query** — the cleaned terms actually sent to the search backend (filler words like "create", "a", "the" are stripped)
+- **Backend** — `semantic` (BM25 + cosine via embedding model) or `keyword` (BM25 only)
+- **Score threshold** — the minimum score a chunk must reach to be included (default 0.3 for semantic)
+- **All chunks returned** — every result with its score, source file, and a 3-line preview; each marked ✓ kept or ✗ filtered
+- **Block injected** — the exact `## Reference Material` text that would be pasted into the system prompt
+
+This is useful for:
+- Checking whether your KB has relevant content for a task
+- Tuning `semantic_threshold` in `~/.codey-v2/config.json` if too much or too little is being retrieved
+- Verifying that newly indexed documents are being found
+
+If the output shows `(nothing injected — all chunks filtered out or KB empty)`, either the KB has no relevant documents or the score threshold is too high for the available content.
+
+---
+
 ## Feature Summary
 
 | Feature | Detail |

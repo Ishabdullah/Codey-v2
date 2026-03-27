@@ -36,7 +36,7 @@ pip install rich numpy watchdog
 ```bash
 git clone https://github.com/ggerganov/llama.cpp ~/llama.cpp
 cd ~/llama.cpp
-cmake -B build -DLLAMA_CURL=OFF
+cmake -B build -DLLAMA_CURL=OFF  # disables optional libcurl dependency (unavailable on Termux; not needed for local inference)
 cmake --build build --config Release -j4
 ```
 
@@ -82,6 +82,8 @@ chmod +x codey2 codeyd2
 echo 'export PATH="$HOME/codey-v2:$PATH"' >> ~/.bashrc
 source ~/.bashrc
 ```
+
+> **Other shells:** For `zsh`, replace `~/.bashrc` with `~/.zshrc`. For fish, add `set -x PATH $HOME/codey-v2 $PATH` to `~/.config/fish/config.fish`. For a universal fallback, add the export to `~/.profile`.
 
 ### Step 6 — Verify
 

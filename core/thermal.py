@@ -38,10 +38,30 @@ class ThermalManager:
         # Set to True when a thread reduction fires; inference.py checks this
         # and restarts llama-server with the updated thread count on next call.
         self.restart_recommended: bool = False
-    
+        # Temperature snapshot tracking
+        self._last_start_time: Optional[float] = None   # kept after inference ends
+        self._last_temp_snapshot: float = 0             # monotonic time of last read
+
+    def _read_cpu_temp(self) -> Optional[float]:
+        """Read peak CPU temperature from /sys/class/thermal, return °C or None."""
+        thermal_root = Path("/sys/class/thermal")
+        best: Optional[float] = None
+        try:
+            for zone in sorted(thermal_root.glob("thermal_zone*/temp")):
+                try:
+                    val = int(zone.read_text().strip()) / 1000.0  # millidegrees → °C
+                    if best is None or val > best:
+                        best = val
+                except (OSError, ValueError):
+                    continue
+        except OSError:
+            pass
+        return best
+
     def start_inference(self):
         """Mark the start of an inference."""
         self._start_time = time.time()
+        self._last_start_time = self._start_time
     
     def end_inference(self):
         """Mark the end of an inference and check thermal status."""
@@ -60,7 +80,26 @@ class ThermalManager:
         """Check thermal status and apply throttling if needed."""
         if not THERMAL_CONFIG.get("enabled", True):
             return
-        
+
+        # Read device temperature with guards:
+        # - Skip if < 3s since inference started (CPU spike not yet settled)
+        # - Skip if < 10s since the last read (avoid constant sampling)
+        now = time.time()
+        if (
+            self._last_start_time is not None
+            and now - self._last_start_time >= 3
+            and now - self._last_temp_snapshot >= 10
+        ):
+            temp = self._read_cpu_temp()
+            if temp is not None:
+                self._last_temp_snapshot = now
+                crit = THERMAL_CONFIG.get("temp_critical", 90)
+                warn = THERMAL_CONFIG.get("temp_warn", 75)
+                if temp >= crit:
+                    warning(f"Thermal: CPU temperature critical ({temp:.1f}°C)")
+                elif temp >= warn:
+                    warning(f"Thermal: CPU temperature high ({temp:.1f}°C)")
+
         # Check for warning threshold
         warn_after = THERMAL_CONFIG.get("warn_after_sec", 300)
         if self._total_inference_sec > warn_after:

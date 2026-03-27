@@ -9,7 +9,7 @@ DANGEROUS_COMMANDS = [
 ]
 
 # Shell metacharacters that enable sub-shell injection
-SHELL_METACHARACTERS = [';', '&&', '||', '|', '`', '$(', '${', '<(', '>(']
+SHELL_METACHARACTERS = [';', '&&', '||', '|', '`', '$(', '${', '<(', '>(', '\n', '\r']
 
 def validate_command_structure(command: str) -> tuple[bool, str]:
     """
@@ -47,7 +47,7 @@ def is_dangerous(command: str) -> bool:
     dangerous_patterns = ["sudo ", "> /dev/", "| sh", "| bash", ":(){:|:&};:"]
     return any(p in cmd_lower for p in dangerous_patterns)
 
-def shell(command: str, yolo: bool = False, timeout: int = 1800, skip_structure_check: bool = False) -> str:
+def shell(command: str, yolo: bool = False, timeout: int = 1800) -> str:
     """
     Execute a shell command. Returns combined stdout + stderr.
     Prompts for confirmation on dangerous or any command if confirm_shell=True.
@@ -56,17 +56,15 @@ def shell(command: str, yolo: bool = False, timeout: int = 1800, skip_structure_
         command: The shell command to execute
         yolo: Skip confirmation prompts
         timeout: Command timeout in seconds (default: 30 minutes for long-running tasks)
-        skip_structure_check: Skip shell metacharacter validation (for trusted callers)
-        
+
     Returns:
         Command output or error message
     """
-    # Validate command structure (prevent sub-shell injection)
-    if not skip_structure_check:
-        is_valid, error_msg = validate_command_structure(command)
-        if not is_valid:
-            error(f"Blocked unsafe command: `{command}`")
-            return f"[ERROR] Command blocked: {error_msg}"
+    # Validate command structure (prevent sub-shell injection) — always enforced
+    is_valid, error_msg = validate_command_structure(command)
+    if not is_valid:
+        error(f"Blocked unsafe command: `{command}`")
+        return f"[ERROR] Command blocked: {error_msg}"
     
     should_confirm = False
 

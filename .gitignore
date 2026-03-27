@@ -50,10 +50,14 @@ codey-finetune*/
 codey-lora*/
 
 # ── Codey-v2: dev artifacts ───────────────────────────────────────────────────
+backups/
 codey_backup_*/
+backups/
 .pytest_cache/
 .codeyignore
 audit_report_*.md
+REFACTOR_*.md
+RELEASE_NOTES_*.md
 test_checkpoint.json
 test1_output.log
 test_project/

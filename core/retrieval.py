@@ -101,13 +101,24 @@ def retrieve(user_message: str, budget_chars: int = None) -> str:
     if not results:
         return ""
 
-    # Filter by minimum relevance score (semantic search returns 0.0–1.0)
-    # Keyword fallback returns raw overlap counts — always include them
+    # Filter by semantic relevance when hybrid search ran.
+    # semantic_score is the cosine similarity (0–1) stored on each result that
+    # came from the vector search.  BM25-only results have no semantic_score
+    # and are passed through unconditionally.
     if use_semantic:
         semantic_threshold = RETRIEVAL_CONFIG.get("semantic_threshold", 0.3)
-        # Only filter if scores look like cosine similarities (0–1 range)
-        if results and results[0].get("score", 0) <= 1.0:
-            results = [r for r in results if r.get("score", 0) >= semantic_threshold]
+        results = [
+            r for r in results
+            if r.get("semantic_score", semantic_threshold) >= semantic_threshold
+        ]
+
+        # Relevance gate: if even the best chunk's cosine similarity doesn't
+        # clear the gate, the KB has nothing specifically relevant — inject
+        # nothing rather than padding the prompt with unrelated content.
+        relevance_gate = RETRIEVAL_CONFIG.get("relevance_gate", 0.72)
+        best_cosine = max((r.get("semantic_score", 0.0) for r in results), default=0.0)
+        if best_cosine > 0.0 and best_cosine < relevance_gate:
+            return ""
 
     if not results:
         return ""
@@ -162,6 +173,69 @@ def retrieve_for_error(error_text: str, tool_name: str, budget_chars: int = 1200
     )
     query = f"{tool_name} {error_summary}"
     return retrieve(query, budget_chars=budget_chars)
+
+
+def retrieve_debug(user_message: str) -> dict:
+    """
+    Run retrieval for *user_message* and return a detailed breakdown for
+    inspection.  Intended for the /rag command — never called during normal
+    inference.
+
+    Returns a dict with:
+        query       — the cleaned query sent to the search backend
+        backend     — "semantic" | "keyword" | "unavailable"
+        all_chunks  — every result before score filtering, with score + source
+        kept_chunks — results that passed the score threshold
+        block       — the ## Reference Material string that would be injected
+                      (empty string if nothing passed)
+    """
+    budget_chars = RETRIEVAL_CONFIG.get("budget_chars", 2400)
+    max_chunks   = RETRIEVAL_CONFIG.get("max_chunks", 4)
+    min_score    = RETRIEVAL_CONFIG.get("min_score", 0.0)
+    use_semantic = RETRIEVAL_CONFIG.get("semantic_search", True)
+    semantic_threshold = RETRIEVAL_CONFIG.get("semantic_threshold", 0.3)
+
+    query = extract_query(user_message)
+    if not query.strip():
+        return {"query": query, "backend": "none", "all_chunks": [],
+                "kept_chunks": [], "block": ""}
+
+    all_chunks = []
+    backend = "unavailable"
+    try:
+        if use_semantic:
+            from tools.kb_semantic import semantic_search, has_index, keyword_fallback
+            if has_index():
+                all_chunks = semantic_search(query, top_k=max_chunks * 2)
+                backend = "semantic"
+            else:
+                all_chunks = keyword_fallback(query, top_k=max_chunks * 2)
+                backend = "keyword"
+        else:
+            from tools.kb_semantic import keyword_fallback
+            all_chunks = keyword_fallback(query, top_k=max_chunks * 2)
+            backend = "keyword"
+    except Exception as e:
+        return {"query": query, "backend": "unavailable", "error": str(e),
+                "all_chunks": [], "kept_chunks": [], "block": ""}
+
+    # Apply the same score filter as retrieve()
+    kept = list(all_chunks)
+    if use_semantic and backend == "semantic":
+        if kept and kept[0].get("score", 0) <= 1.0:
+            kept = [r for r in kept if r.get("score", 0) >= semantic_threshold]
+    kept = kept[:max_chunks]
+
+    block = retrieve(user_message, budget_chars=budget_chars)
+
+    return {
+        "query":       query,
+        "backend":     backend,
+        "threshold":   semantic_threshold if backend == "semantic" else min_score,
+        "all_chunks":  all_chunks,
+        "kept_chunks": kept,
+        "block":       block,
+    }
 
 
 def retrieval_status() -> dict:

@@ -62,7 +62,7 @@ Hierarchical memory stored in SQLite (`~/.codey-v2/`).
 
 **Mitigations:**
 - Data stored in Termux app-private directories.
-- No automatic exfiltration. No network calls by default.
+- No unsolicited network calls. Exception: peer CLI escalation (Claude Code, Gemini CLI, Qwen CLI) can send local file contents to external LLMs when triggered — requires explicit user confirmation before any files are shared (see [Peer CLI Escalation](../README.md#peer-cli-escalation)).
 - Encryption is not yet implemented (planned).
 
 **Recommendation:** Avoid feeding sensitive information (API keys, passwords) to the agent. Periodically review or clear state with `codey2 memory clear`.

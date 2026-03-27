@@ -162,6 +162,24 @@ def _try_daemon_plan(prompt: str, no_plan: bool = False):
     return None
 
 
+def _extract_filename_from_step(step: str) -> str:
+    """
+    Extract a filename from a plan step description.
+
+    Matches backtick-quoted names first (e.g. `wordcount.py`), then falls back
+    to any word containing a dot-extension (e.g. fibonacci.py).
+    Returns an empty string if no filename is found.
+    """
+    import re
+    m = re.search(r'`([^`]+\.[a-zA-Z0-9]{1,10})`', step)
+    if m:
+        return m.group(1)
+    m = re.search(r'\b(\w[\w.-]*\.[a-zA-Z0-9]{1,5})\b', step)
+    if m:
+        return m.group(1)
+    return ""
+
+
 def _run_with_plan(prompt: str, history: list, yolo: bool, use_plan: bool, no_plan: bool):
     """
     Execute a user prompt, routing through the daemon for planning when available.
@@ -169,11 +187,17 @@ def _run_with_plan(prompt: str, history: list, yolo: bool, use_plan: bool, no_pl
     If the daemon is running and plannd returns a plan:
       1. Print the numbered plan from DeepSeek before any execution begins.
       2. Run each step through run_agent() locally (7B model, visible in terminal).
+      3. After file-creation steps, verify the file was actually written.
+         If not, retry the step once before continuing.
 
     Otherwise fall back to a direct run_agent() call — identical to existing behaviour.
 
     Returns (response, updated_history) with the same contract as run_agent().
     """
+    import re
+    from pathlib import Path
+    import os
+
     plan = _try_daemon_plan(prompt, no_plan)
 
     if plan:
@@ -183,11 +207,38 @@ def _run_with_plan(prompt: str, history: list, yolo: bool, use_plan: bool, no_pl
             console.print(f"  [bold cyan]{i}.[/bold cyan] {step}")
         separator()
 
+        _CREATE_KEYWORDS = {"create", "write", "make", "build", "generate", "save"}
+
+        # Retrieve once on the full user prompt so every step gets the richest
+        # possible KB context instead of querying on terse planner-generated text.
+        _plan_rag = ""
+        try:
+            from core.retrieval import retrieve
+            _plan_rag = retrieve(prompt) or ""
+        except Exception:
+            pass
+
         response = ""
         for i, step in enumerate(plan, 1):
             console.print(f"\n[dim]── Step {i}/{len(plan)}: {step}[/dim]")
-            step_resp, history = run_agent(step, history, yolo=yolo, no_plan=True)
+            step_resp, history = run_agent(step, history, yolo=yolo, no_plan=True,
+                                           _plan_rag_block=_plan_rag)
             response = step_resp or response
+
+            # Post-step: if this step was supposed to create a file, verify it
+            # actually exists. If not, retry once before moving to the next step.
+            step_low = step.lower()
+            if any(k in step_low for k in _CREATE_KEYWORDS):
+                fname = _extract_filename_from_step(step)
+                if fname:
+                    target = Path(os.getcwd()) / fname
+                    if not target.exists():
+                        warning(f"Step {i}: '{fname}' not found after step — retrying")
+                        console.print(f"\n[dim]↺  Step {i}/{len(plan)} retry (file not created)[/dim]")
+                        step_resp, history = run_agent(step, history, yolo=yolo, no_plan=True,
+                                                       _plan_rag_block=_plan_rag)
+                        response = step_resp or response
+
         return response, history
 
     # No plan available — run directly as before
@@ -382,7 +433,7 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
                                 f"There are merge conflicts after merging branch '{arg}'. "
                                 f"Please resolve them.\n\n" + "\n\n".join(conflict_context)
                             )
-                            history = run_agent(prompt, history, yolo=yolo)
+                            _, history = run_agent(prompt, history, yolo=yolo)
                     else:
                         info("Resolve conflicts manually, then run: /git commit")
                 else:
@@ -538,6 +589,49 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
         console.print(f"  Summary:          {s['summary_tokens']} tokens")
         if _mem.get_summary():
             console.print(f"[dim]{_mem.get_summary()}[/dim]")
+        return True, history
+
+    if low.startswith("/memory-v2"):
+        from core.memory import memory as _mem
+        s = _mem.status()
+        console.print("[bold]Four-Tier Memory Status:[/bold]")
+        console.print()
+        # Tier 1: Working Memory
+        console.print("[bold cyan]1. Working Memory[/bold cyan]")
+        console.print(f"   Files: {s['working']['files']} — {', '.join(s['working']['file_names']) or 'none'}")
+        console.print(f"   Tokens: {s['working']['total_tokens']} / {s['working']['turn']} turns")
+        console.print()
+        # Tier 2: Project Memory
+        console.print("[bold cyan]2. Project Memory (never evicted)[/bold cyan]")
+        _proj_files = _mem.project.get_protected_files()
+        console.print(f"   Protected files: {len(_proj_files)}")
+        for pf in _proj_files[:10]:
+            console.print(f"     • {pf}")
+        if len(_proj_files) > 10:
+            console.print(f"     ... and {len(_proj_files) - 10} more")
+        console.print()
+        # Tier 3: Long-term Memory
+        console.print("[bold cyan]3. Long-term Memory (embeddings)[/bold cyan]")
+        _lt = s['longterm']
+        if _lt['available']:
+            console.print(f"   Status: available")
+            console.print(f"   Embeddings: {_lt['embeddings']}")
+        else:
+            console.print(f"   Status: unavailable ({_lt.get('init_error', 'not initialized')})")
+        console.print()
+        # Tier 4: Episodic Memory
+        console.print("[bold cyan]4. Episodic Memory (action log)[/bold cyan]")
+        _recent = _mem.episodic.get_recent(10)
+        if _recent:
+            console.print(f"   Recent actions (last {len(_recent)}):")
+            for action in _recent[-5:]:
+                _action = action.get('action', 'unknown')
+                _details = action.get('details', '')[:60]
+                _ts = action.get('timestamp', '')
+                console.print(f"     [{_ts}] {_action}: {_details}")
+        else:
+            console.print("   No recent actions logged")
+        console.print()
         return True, history
 
     if low.startswith("/cwd"):
@@ -798,6 +892,55 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
             success(f"Result from {cli.name} added to conversation context.")
         return True, history
 
+    # ── /rag ─────────────────────────────────────────────────────────────────
+    if low.startswith("/rag"):
+        parts = cmd.split(maxsplit=1)
+        if len(parts) < 2:
+            info("Usage: /rag <prompt>   — show what the KB would inject for that prompt")
+            return True, history
+
+        from core.retrieval import retrieve_debug
+        d = retrieve_debug(parts[1])
+
+        console.print(f"\n[bold]RAG Debug[/bold] — query sent to KB: [cyan]\"{d['query']}\"[/cyan]")
+        console.print(f"  Backend: [cyan]{d['backend']}[/cyan]   "
+                      f"Score threshold: [cyan]{d.get('threshold', '?')}[/cyan]\n")
+
+        all_chunks = d.get("all_chunks", [])
+        kept_set   = {id(r) for r in d.get("kept_chunks", [])}
+
+        if not all_chunks:
+            if "error" in d:
+                warning(f"KB unavailable: {d['error']}")
+            else:
+                info("No results — KB is empty or no match found.")
+            return True, history
+
+        console.print(f"[bold]All chunks returned ({len(all_chunks)}):[/bold]")
+        for i, r in enumerate(all_chunks, 1):
+            score  = r.get("score", 0)
+            source = Path(r.get("source", "")).name or "?"
+            text   = r.get("text", "").strip()
+            kept   = id(r) in kept_set
+            tag    = "[green]✓ kept[/green]" if kept else "[red]✗ filtered[/red]"
+            console.print(f"\n  [{i}] {tag}  score=[cyan]{score:.3f}[/cyan]  source=[dim]{source}[/dim]")
+            # Show first 3 lines of the chunk
+            preview = "\n".join(text.splitlines()[:3])
+            if len(text.splitlines()) > 3:
+                preview += f"\n    [dim]... ({len(text.splitlines())} lines total)[/dim]"
+            for line in preview.splitlines():
+                console.print(f"      {line}")
+
+        console.print(f"\n[bold]Block injected into prompt ({len(d['block'])} chars):[/bold]")
+        if d["block"]:
+            console.print(f"[dim]{d['block'][:1200]}[/dim]")
+            if len(d["block"]) > 1200:
+                console.print(f"[dim]  ... ({len(d['block'])} chars total)[/dim]")
+        else:
+            info("(nothing injected — all chunks filtered out or KB empty)")
+        console.print()
+        return True, history
+
     if low == "/help":
         console.print("""
 [bold]File commands:[/bold]
@@ -834,6 +977,9 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
   /summarize             Compress conversation to save context
   /clear                 Clear history, context, undo, session
   /exit                  Save session and quit
+
+[bold]Knowledge Base:[/bold]
+  /rag <prompt>          Show what the KB would inject for that prompt
 
 [bold]Learning:[/bold]
   /learning              Show learning system status (v2.2.0)

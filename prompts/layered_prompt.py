@@ -238,7 +238,7 @@ def invalidate_prompt_cache():
 
 # ── Phase-specific builders ───────────────────────────────────────────────────
 
-def _build_draft_prompt(user_message: str) -> str:
+def _build_draft_prompt(user_message: str, plan_rag_block: str = "") -> str:
     """
     Full-context system prompt for the initial draft generation.
     Identical output to the old build_system_prompt(message) — no regression.
@@ -260,17 +260,31 @@ def _build_draft_prompt(user_message: str) -> str:
             and _draft_cache["files_hash"] == current_fh):
         return _draft_cache["prompt"]
 
-    from prompts.system_prompt import SYSTEM_PROMPT
+    from prompts.system_prompt import SYSTEM_PROMPT, CAPABILITIES_PROMPT
 
-    p = LayeredPrompt(budget_chars=12000)
+    # 20 000 chars ≈ 5 000 tokens — well within the 32 768-token context window.
+    # Previously 12 000 left 80% of the context unused; raising this lets more
+    # files, RAG results, and skill patterns fit without eviction.
+    p = LayeredPrompt(budget_chars=20000)
     p.add("identity",  SYSTEM_PROMPT,             priority=0, required=True)
+
+    # Inject capabilities only when the user is asking about them
+    _msg_low = user_message.lower() if user_message else ""
+    _cap_kw = ("what can you", "what do you", "capabilities", "help", "what are you")
+    if any(k in _msg_low for k in _cap_kw):
+        p.add("capabilities", CAPABILITIES_PROMPT, priority=1)
+
     p.add("notes",     _get_notes_block(),          priority=1)
     p.add("prefs",     _get_preferences_block(),   priority=1)
     p.add("project",   _get_project_block(),        priority=2)
     p.add("repo_map",  _get_repo_map_block(),       priority=3)
 
-    # Phase 1 RAG: inject relevant KB docs
-    if user_message:
+    # Phase 1 RAG: inject relevant KB docs.
+    # If a pre-fetched block is supplied (e.g. from _run_with_plan retrieving
+    # once on the full user prompt), use it directly — skip the per-step call.
+    if plan_rag_block:
+        p.add("retrieval", plan_rag_block, priority=3)
+    elif user_message:
         try:
             from core.retrieval import retrieve
             retrieved = retrieve(user_message)
@@ -354,7 +368,7 @@ def _build_refine_prompt(
     """
     from prompts.system_prompt import SYSTEM_PROMPT
 
-    p = LayeredPrompt(budget_chars=12000)
+    p = LayeredPrompt(budget_chars=20000)
     p.add("identity", SYSTEM_PROMPT,             priority=0, required=True)
     p.add("prefs",    _get_preferences_block(),   priority=1)
     p.add("project",  _get_project_block(),        priority=2)
@@ -387,6 +401,7 @@ def build_recursive_prompt(
     prior_draft: str = "",
     prior_critique: str = "",
     retrieved_context: str = "",
+    plan_rag_block: str = "",
 ) -> str:
     """
     Phase-aware system prompt builder.  Replaces build_system_prompt().
@@ -410,4 +425,4 @@ def build_recursive_prompt(
     if phase == "refine":
         return _build_refine_prompt(user_message, prior_critique, retrieved_context)
     # default: "draft"
-    return _build_draft_prompt(user_message)
+    return _build_draft_prompt(user_message, plan_rag_block=plan_rag_block)
