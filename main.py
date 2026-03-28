@@ -134,18 +134,8 @@ def run_init():
 
 def _try_daemon_plan(prompt: str, no_plan: bool = False):
     """
-    If the daemon is running, send the prompt through its Unix socket so that
-    _handle_command is called and plannd (DeepSeek 1.5B) gets a chance to produce
-    a numbered plan.
-
-    Returns the list of step strings on success, or None so the caller falls back
-    to direct run_agent() — identical to pre-plannd behaviour.
-
-    Failure modes handled silently:
-      - Daemon not running         → None
-      - plannd not yet loaded      → None (no "plan" key in response)
-      - Socket timeout (60 s)      → None
-      - Any exception              → None
+    Send the prompt to the daemon (Unix socket) so the 0.5B model can produce
+    a numbered plan.  Returns step list on success, None on any failure.
     """
     if no_plan:
         return None
@@ -153,12 +143,21 @@ def _try_daemon_plan(prompt: str, no_plan: bool = False):
         from core.daemon import is_daemon_running, send_command
         if not is_daemon_running():
             return None
-        response = send_command("command", {"prompt": prompt, "no_plan": False, "plan_only": True})
+        info("Requesting plan from 0.5B planner...")
+        response = send_command(
+            "command",
+            {"prompt": prompt, "no_plan": False, "plan_only": True},
+            timeout=185,  # slightly over daemon's 180s wait_for
+        )
         plan = response.get("plan")
         if plan and isinstance(plan, list) and len(plan) > 1:
             return plan
-    except Exception:
-        pass  # daemon unavailable, plannd not ready, or timed out → fall through
+        if not plan:
+            info("Planner returned no steps — running directly")
+        elif len(plan) == 1:
+            info("Planner returned 1 step — running directly")
+    except Exception as _e:
+        info(f"Planner unavailable ({type(_e).__name__}) — running directly")
     return None
 
 
@@ -202,7 +201,7 @@ def _run_with_plan(prompt: str, history: list, yolo: bool, use_plan: bool, no_pl
 
     if plan:
         separator()
-        console.print("[bold cyan]Plan from DeepSeek:[/bold cyan]")
+        console.print("[bold cyan]Plan:[/bold cyan]")
         for i, step in enumerate(plan, 1):
             console.print(f"  [bold cyan]{i}.[/bold cyan] {step}")
         separator()

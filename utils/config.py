@@ -113,19 +113,12 @@ RETRIEVAL_CONFIG = {
 CODEY_VERSION = "2.7.0"
 CODEY_NAME    = "Codey-v2"
 
-# ── Summarizer daemon (plannd) — Change 1 ────────────────────────────────────
-# Qwen2.5-0.5B runs as a dedicated summarization/planning model on its own
-# llama-server instance (port 8081), entirely separate from the 7B server (port 8080).
-# Planning is handled by the 7B model (PLANNER_USE_7B=True); plannd only summarizes.
-# NOTE: DEEPSEEK_MODEL_PATH is a legacy name — the model is Qwen2.5-0.5B, not DeepSeek.
-# Override any of these via environment variables without touching this file.
-DEEPSEEK_MODEL_PATH = Path(os.environ.get(
+# ── 0.5B planner/summarizer (port 8081) ───────────────────────────────────────
+# Qwen2.5-0.5B runs as a dedicated planning + summarization model on port 8081,
+# entirely separate from the 7B agent server on port 8080.
+PLANNER_MODEL_PATH = Path(os.environ.get(
     "CODEY_PLANNER_MODEL",
     Path.home() / "models" / "qwen2.5-0.5b" / "qwen2.5-0.5b-instruct-q8_0.gguf"
-))
-PLANND_SOCKET_PATH = Path(os.environ.get(
-    "CODEY_PLANND_SOCK",
-    Path.home() / ".codey-v2" / "plannd.sock"
 ))
 PLANND_SERVER_PORT = int(os.environ.get("CODEY_PLANND_PORT", "8081"))
 
@@ -137,9 +130,7 @@ PLANND_SERVER_PORT = int(os.environ.get("CODEY_PLANND_PORT", "8081"))
 QWEN_7B_MMAP  = os.environ.get("CODEY_7B_MMAP",  "1") != "0"   # default: True
 QWEN_7B_MLOCK = os.environ.get("CODEY_7B_MLOCK", "0") != "0"   # default: False
 
-# ── 7B self-planning settings (replaces plannd) ──────────────────────────────
-# The 7B model on port 8080 handles planning directly.
-# Temperature 0.2 keeps plans focused; 256 tokens is enough for 5 clean steps.
-PLANNER_USE_7B       = True
+# ── Planner settings ─────────────────────────────────────────────────────────
+# Temperature 0.2 keeps plans focused; 768 gives room for 5 detailed steps.
 PLANNER_TEMPERATURE  = 0.2
-PLANNER_MAX_TOKENS   = 512  # raised from 256 — avoids step truncation on complex tasks
+PLANNER_MAX_TOKENS   = 768

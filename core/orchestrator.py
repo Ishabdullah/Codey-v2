@@ -406,7 +406,10 @@ def run_queue(queue, yolo=False):
                 pass  # Retrieval unavailable — continue without
 
             # Remind model to use tools (7B models often forget)
-            _target_files = _FILE_RE.findall(task.description)
+            # Prefer filenames from the original user request — planner sometimes uses wrong names
+            _target_files = _FILE_RE.findall(original) if original else []
+            if not _target_files:
+                _target_files = _FILE_RE.findall(task.description)
             if _target_files:
                 _fname = _target_files[0]
                 prompt += (

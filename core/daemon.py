@@ -114,14 +114,13 @@ class DaemonServer:
     async def _handle_command(self, data: Dict) -> Dict:
         """Handle a user command (prompt).
 
-        If plannd is available and no_plan is not set, the raw prompt is sent to
-        plannd (DeepSeek 1.5B) which returns a numbered step list.  Each step is
-        added as a dependent task via Planner.add_tasks() so the 7B model works
-        through them one at a time.
+        The 0.5B model on port 8081 plans the task into numbered steps.
+        Each step is added as a dependent task so the 7B agent works through
+        them one at a time.
 
-        If plannd is unavailable, times out (>45 s), or returns fewer than 2 steps,
-        the prompt is queued as a single direct task — identical to prior behaviour.
-        Plannd failure is always silent (logged only) and never surfaces as an error.
+        If the planner is unavailable, times out, or returns fewer than 2 steps,
+        the prompt is queued as a single direct task.  Planner failure is always
+        silent (logged only) and never surfaces as an error.
         """
         prompt = data.get("prompt", "")
         if not prompt:
@@ -178,7 +177,7 @@ class DaemonServer:
                 if steps:
                     info("plannd returned only 1 step — using single-task path")
             except asyncio.TimeoutError:
-                warning("plannd request timed out after 45 s — falling back to direct task")
+                warning("plannd request timed out after 180 s — falling back to direct task")
             except ConnectionRefusedError:
                 # plannd not running — silent fallback
                 pass
@@ -649,13 +648,13 @@ def is_daemon_running() -> bool:
         return False
 
 
-def send_command(cmd: str, data: Dict = None) -> Dict:
+def send_command(cmd: str, data: Dict = None, timeout: float = 60.0) -> Dict:
     """Send a command to the daemon via socket."""
     if not SOCKET_FILE.exists():
         raise ConnectionError("Daemon socket not found. Is the daemon running?")
 
     sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-    sock.settimeout(60.0)
+    sock.settimeout(timeout)
 
     try:
         sock.connect(str(SOCKET_FILE))

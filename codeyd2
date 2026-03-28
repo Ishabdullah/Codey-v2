@@ -10,7 +10,7 @@
 #   reload  - Send reload signal (SIGUSR1) to main daemon
 #   config  - Create default config file
 #
-# plannd (planner daemon) runs DeepSeek-R1-1.5B on port 8081.
+# plannd (planner daemon) runs Qwen2.5-0.5B on port 8081.
 # If plannd fails to start, the main daemon continues with heuristic planning.
 #
 
@@ -62,9 +62,14 @@ sys.path.insert(0, "$CODEY_V2_DIR")
 def port_healthy(port):
     try:
         with urllib.request.urlopen(
-            f"http://127.0.0.1:{port}/health", timeout=1
+            f"http://127.0.0.1:{port}/health", timeout=2
         ) as r:
-            return r.status == 200
+            if r.status != 200:
+                return False
+            import json as _json
+            body = _json.loads(r.read().decode())
+            # llama-server sets status="loading model" while weights are loading
+            return body.get("status") == "ok"
     except Exception:
         return False
 
@@ -79,7 +84,10 @@ if port_healthy(8080):
 else:
     print("7B model:       not loaded")
 
-print("Planner:        7B self-planning (port 8080)")
+if port_healthy(8081):
+    print("Planner:        0.5B planning (port 8081)")
+else:
+    print("Planner:        0.5B not loaded (port 8081)")
 PYEOF
 
     if $main_running; then
@@ -188,50 +196,62 @@ start_plannd() {
     if [ -f "$PLANND_PID_FILE" ]; then
         PID=$(cat "$PLANND_PID_FILE" 2>/dev/null || echo "")
         if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then
-            echo "Planner daemon already running (PID: $PID)"
+            echo "Planner (0.5B) already running (PID: $PID)"
             return 0
         else
             rm -f "$PLANND_PID_FILE"
         fi
     fi
 
-    echo "Starting planner daemon (plannd)..."
+    echo "Starting 0.5B planner/summarizer on port 8081..."
 
     # Kill any orphaned llama-server on port 8081 from a previous session
     pkill -9 -f "llama-server.*8081" 2>/dev/null || true
     sleep 0.5
 
-    TMPSCRIPT="$(mktemp "$DAEMON_DIR/plannd_run_XXXX.py")"
-    trap 'rm -f "${TMPSCRIPT:-}"' ERR
+    # Resolve model path and llama-server binary from config
+    PLANNER_MODEL=$(python3 -c "
+import sys; sys.path.insert(0, '$CODEY_V2_DIR')
+from utils.config import PLANNER_MODEL_PATH, LLAMA_SERVER_BIN
+print(PLANNER_MODEL_PATH)
+print(LLAMA_SERVER_BIN)
+" 2>/dev/null)
 
-    cat > "$TMPSCRIPT" << PYEOF
-import sys
-import os
+    MODEL_FILE=$(echo "$PLANNER_MODEL" | head -1)
+    LLAMA_BIN=$(echo "$PLANNER_MODEL" | tail -1)
 
-CODEY_V2_DIR = "$CODEY_V2_DIR"
-sys.path.insert(0, CODEY_V2_DIR)
-os.environ.setdefault("CODEY_DIR", CODEY_V2_DIR)
+    if [ -z "$MODEL_FILE" ] || [ ! -f "$MODEL_FILE" ]; then
+        echo "WARNING: 0.5B model not found. Planner/summarizer unavailable."
+        return 0
+    fi
 
-from core.plannd import main
-main()
-PYEOF
-
-    nohup python3 "$TMPSCRIPT" > "$PLANND_LOG_FILE" 2>&1 &
+    nohup "$LLAMA_BIN" \
+        -m "$MODEL_FILE" \
+        --host 127.0.0.1 \
+        --port 8081 \
+        -c 8192 \
+        -t 4 \
+        --temp 0.3 \
+        --top-p 0.9 \
+        --top-k 20 \
+        --repeat-penalty 1.1 \
+        --flash-attn on \
+        > "$PLANND_LOG_FILE" 2>&1 &
     PLANND_PID=$!
+    echo "$PLANND_PID" > "$PLANND_PID_FILE"
 
     sleep 1
 
     if kill -0 "$PLANND_PID" 2>/dev/null; then
-        echo "Planner daemon started (PID: $PLANND_PID)"
+        echo "Planner started (PID: $PLANND_PID)"
         echo "Log: $PLANND_LOG_FILE"
-        echo "Note: DeepSeek model is loading in background (~30-60 s)."
+        echo "Note: 0.5B model loading in background (~30-60 s)."
     else
-        echo "WARNING: Planner daemon failed to start. Check: $PLANND_LOG_FILE"
+        echo "WARNING: Planner failed to start. Check: $PLANND_LOG_FILE"
         echo "         Main daemon will use fallback planning."
-        # Do NOT return 1 — plannd failure must not fail overall start
+        rm -f "$PLANND_PID_FILE"
     fi
 
-    (sleep 5 && rm -f "$TMPSCRIPT") &
     return 0
 }
 
@@ -271,8 +291,10 @@ stop_plannd() {
 # ── Combined operations ────────────────────────────────────────────────────────
 
 restart_all() {
+    stop_plannd || true
     stop_daemon || true
     sleep 1
+    start_plannd || true
     start_daemon
 }
 
@@ -299,12 +321,14 @@ reload_daemon() {
 
 case "${1:-status}" in
     start)
+        start_plannd || true
         start_daemon
         echo ""
         show_status || true
         ;;
     stop)
         stop_daemon || true
+        stop_plannd || true
         ;;
     status)
         show_status
