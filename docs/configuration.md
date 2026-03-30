@@ -130,17 +130,33 @@ RETRIEVAL_CONFIG = {
 
 ---
 
+## Agent Config
+
+Key agent behavior settings in `utils/config.py`:
+
+```python
+AGENT_CONFIG = {
+    "max_steps":     10,    # Max tool-call steps per task (raised from 6 in v2.7.1)
+    "confirm_shell": True,  # Prompt user before every shell command
+    "yolo":          False, # Skip all confirmation prompts
+}
+```
+
+---
+
 ## Environment Variable Overrides
 
 Any model path or port can be overridden without editing `config.py`:
 
-| Variable | Default |
-|----------|---------|
-| `CODEY_MODEL` | `~/models/qwen2.5-coder-7b/qwen2.5-coder-7b-instruct-q4_k_m.gguf` |
-| `CODEY_EMBED_MODEL` | `~/models/nomic-embed/nomic-embed-text-v1.5.Q4_K_M.gguf` |
-| `CODEY_PLANNER_MODEL` | `~/models/qwen2.5-0.5b/qwen2.5-0.5b-instruct-q8_0.gguf` |
-| `CODEY_EMBED_PORT` | `8082` |
-| `CODEY_PLANND_PORT` | `8081` |
-| `CODEY_LLAMA_SERVER` | Auto-detected from PATH or `~/llama.cpp/build/bin/llama-server` |
-| `CODEY_7B_MMAP` | `1` (enabled) |
-| `CODEY_7B_MLOCK` | `0` (disabled) |
+| Variable | Default | Notes |
+|----------|---------|-------|
+| `CODEY_MODEL` | `~/models/qwen2.5-coder-7b/qwen2.5-coder-7b-instruct-q4_k_m.gguf` | |
+| `CODEY_EMBED_MODEL` | `~/models/nomic-embed/nomic-embed-text-v1.5.Q4_K_M.gguf` | |
+| `CODEY_PLANNER_MODEL` | `~/models/qwen2.5-0.5b/qwen2.5-0.5b-instruct-q8_0.gguf` | |
+| `CODEY_EMBED_PORT` | `8082` | |
+| `CODEY_PLANND_PORT` | `8081` | |
+| `CODEY_LLAMA_SERVER` | Auto-detected from PATH or `~/llama.cpp/build/bin/llama-server` | |
+| `CODEY_7B_MMAP` | `1` (enabled) | |
+| `CODEY_7B_MLOCK` | `0` (disabled) | |
+| `CODEY_BACKEND` | `local` | Coder backend: `local`, `openrouter`, `unlimitedclaude` |
+| `CODEY_BACKEND_P` | `local` | Planner backend (independent of coder backend) |

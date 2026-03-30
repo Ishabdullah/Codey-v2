@@ -29,7 +29,8 @@ Tools can execute shell commands based on agent decisions.
 **Risk:** Prompt injection or hallucinated output could lead to unintended commands (`rm -rf`, data exfiltration, etc.).
 
 **Mitigations:**
-- Aggressive shell injection prevention: blocks `;`, `&&`, `||`, `|`, backticks, `$()`, `${}`, `<()`, `>()`.
+- All shell commands (including compound commands with `&&`, `|`, `;`, etc.) require explicit user confirmation before running. Dangerous commands (`rm`, `curl`, `wget`, `chmod`, etc.) receive an additional warning before the prompt.
+- YOLO mode (`--yolo`) disables confirmation prompts — use only in trusted, non-interactive contexts.
 - Commands run in user context only — no privilege escalation.
 - Shell timeout defaults to **30 minutes (1800 s)** to support long builds; configurable per-call.
 - Daemon mode blocks commands not in an explicit allowlist (`core/task_executor.py`).
@@ -100,7 +101,7 @@ Runs with Termux permissions (storage, potentially network if tools are expanded
 
 ## Current Hardening Summary
 
-- Shell metacharacter blocking on all tool calls
+- User confirmation required for all shell commands; dangerous commands receive an explicit warning
 - Opt-in self-modification with mandatory checkpoints
 - Workspace and file boundary enforcement
 - Socket permissions locked to owner-only (`0600`)
@@ -114,7 +115,6 @@ Runs with Termux permissions (storage, potentially network if tools are expanded
 
 - Encrypted memory and state storage
 - Runtime sandboxing (bubblewrap / seccomp on Linux)
-- Broader command confirmation prompts
 - Model file hash verification
 - Audit logs and anomaly detection
 

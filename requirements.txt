@@ -15,3 +15,58 @@ watchdog>=3.0.0
 
 # Phase 6: Observability (optional — sysmon.py falls back to /proc/ on Android)
 # psutil>=5.9.0  # Skip on Termux/Android — wheel fails to build, not needed
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Training Data Pipeline (pipeline/)
+# ──────────────────────────────────────────────────────────────────────────────
+# The pipeline builds fine-tuning datasets from HuggingFace + synthetic data.
+# See docs/pipeline.md for the full guide.
+#
+# IMPORTANT — Termux/Android install order:
+#
+#   Step 1 — Install compiled packages via pkg (pip cannot build these on ARM):
+#     pkg install python-pyarrow python-pandas
+#
+#   Step 2 — Install pure-Python packages via pip:
+#     pip install datasets huggingface-hub "fsspec==2026.2.0" \
+#                 httpcore httpx typer tqdm hnswlib \
+#                 aiohttp multiprocess dill xxhash pyyaml \
+#                 filelock requests
+#
+# On desktop Linux, you can install everything via pip (no pkg step needed).
+#
+# Notes:
+#   - fsspec must be pinned to 2026.2.0; datasets 4.8.4 is incompatible with
+#     newer versions (ImportError at runtime if mismatched).
+#   - hf-xet build failures are harmless — it is an optional Rust extension
+#     used only for HuggingFace uploads; ignore any pip build error for it.
+#   - hnswlib provides fast ANN vector search and builds from source via pip
+#     (clang must be installed first on Termux: pkg install clang cmake).
+#     If hnswlib fails to install, the pipeline falls back to numpy brute-force
+#     cosine search automatically — no action required.
+#   - sentence-transformers is an optional fallback embedding backend (384-dim
+#     MiniLM). It requires PyTorch, which is not available on Termux/Android.
+#     The pipeline defaults to the nomic-embed-text llama-server on port 8082.
+
+# Pipeline — pip-installable dependencies (see install order note above)
+datasets>=2.14.0
+huggingface-hub>=0.23.0
+fsspec==2026.2.0
+httpcore>=1.0.0
+httpx>=0.27.0
+typer>=0.9.0
+tqdm>=4.65.0
+hnswlib>=0.7.0
+aiohttp>=3.9.0
+multiprocess>=0.70.0
+dill>=0.3.7
+xxhash>=3.4.0
+pyyaml>=6.0
+filelock>=3.13.0
+requests>=2.31.0
+
+# Pipeline — must be installed via pkg on Termux (pre-built ARM packages):
+#   pkg install python-pyarrow python-pandas
+# pyarrow>=14.0.0   # DO NOT pip install on Termux — build fails on aarch64
+# pandas>=2.0.0     # DO NOT pip install on Termux — build fails on aarch64

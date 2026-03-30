@@ -101,3 +101,68 @@ Setting up a local knowledge base significantly improves response quality. See [
 ## Optional: Fine-tuning
 
 You can personalize the model using your own interaction history. See [fine-tuning.md](fine-tuning.md) for the full workflow.
+
+---
+
+## Optional: Training Data Pipeline
+
+The `pipeline/` directory contains a full data ingestion and transformation pipeline that builds fine-tuning datasets in ShareGPT format from open-source HuggingFace datasets and synthetic corpora.
+
+### What the pipeline needs
+
+The pipeline has additional dependencies beyond the base Codey-v2 install. The install order matters on Termux — some packages with C extensions must be installed via `pkg` (pre-built ARM binaries); pip cannot compile them on aarch64.
+
+#### Step 1 — Install compiled packages via pkg
+
+```bash
+pkg install python-pyarrow python-pandas
+```
+
+> Do **not** use `pip install pyarrow` or `pip install pandas` on Termux. Pip will attempt to compile from source and fail with Rust/meson/Cython errors on aarch64. The `pkg` versions (pyarrow 23.0.1, pandas 3.0.1 as of this writing) are pre-built and work immediately.
+
+#### Step 2 — Install Python packages via pip
+
+```bash
+pip install datasets huggingface-hub "fsspec==2026.2.0" \
+            httpcore httpx typer tqdm hnswlib \
+            aiohttp multiprocess dill xxhash pyyaml \
+            filelock requests
+```
+
+**Key notes:**
+
+- **`fsspec==2026.2.0` must be pinned.** The `datasets` 4.8.4 library is incompatible with `fsspec>=2026.3.0`. Installing without the pin causes an `ImportError` at runtime. If you already have a newer fsspec, downgrade: `pip install "fsspec==2026.2.0"`.
+
+- **`hnswlib` build requires clang.** If you haven't installed clang already (for llama.cpp), run `pkg install clang cmake` first. If hnswlib fails to build for any reason, the pipeline automatically falls back to numpy brute-force cosine search — you do not need hnswlib for the pipeline to work.
+
+- **`hf-xet` build failures are harmless.** You may see `ERROR: Failed to build 'hf-xet'` during `pip install datasets`. This is an optional Rust extension used only for HuggingFace uploads; it is not used by the pipeline. Ignore it.
+
+- **Embedding backend.** The pipeline defaults to the nomic-embed-text llama-server already running on port 8082. `sentence-transformers` is an optional 384-dim fallback that requires PyTorch, which is unavailable on Termux/Android. Only install it if you are running the pipeline on a desktop Linux machine.
+
+### Verify the install
+
+```bash
+python pipeline/run.py --synthetic-only
+```
+
+This generates two synthetic JSONL corpora (~5K Termux CLI examples and ~3K multi-step patterns) without downloading anything from HuggingFace. Expected output:
+
+```
+  Synthetic Termux corpus:    5,780 records → pipeline_output/synthetic/synthetic_termux.jsonl
+  Synthetic multi-step corpus: 50 records → pipeline_output/synthetic/synthetic_multistep.jsonl
+  Output records:  5,830  (100.0% retention)
+```
+
+### Storage requirements
+
+| Component | Size |
+|-----------|------|
+| Base Codey-v2 (models + toolchain) | ~6 GB |
+| Pipeline dependencies (pip packages) | ~800 MB |
+| HuggingFace dataset cache (phase 1, streaming) | minimal — only processed records kept |
+| Pipeline output (training_data.jsonl + index) | ~50–500 MB depending on record count |
+| **Total with pipeline** | **~7–8 GB** |
+
+> If you download all HuggingFace datasets locally instead of streaming, add ~4 GB for phase 1, ~3 GB for phase 2, and ~6 GB for phase 3. Streaming mode (the default) avoids this entirely.
+
+See [pipeline.md](pipeline.md) for the full pipeline guide.

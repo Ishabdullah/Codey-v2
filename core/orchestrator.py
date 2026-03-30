@@ -8,12 +8,17 @@ from utils.logger import info, warning
 
 from prompts.system_prompt import GUIDANCE_HTTP_SERVER, GUIDANCE_HTTP_TESTING, GUIDANCE_SQLITE, GUIDANCE_PERSISTENCE
 
-PLAN_PROMPT = """Break the task into 2-5 numbered steps. Max 5 steps.
-Each step must be a single concrete action: create a file, edit a file, or run a command.
+PLAN_PROMPT = """Break the task into 2-8 numbered steps. Max 8 steps.
+Each step must be a single concrete action: create a file, edit a file, run a command, or delegate to a peer CLI.
 Each step is ONE short sentence describing WHAT to do. Do NOT write any code in the plan.
 NEVER include "open", "save", or "navigate" steps (too vague).
 Running tests (e.g. "run pytest") and committing code (e.g. "git commit") ARE valid steps.
 If the user asks to run the script, add/insert records, or prove/demonstrate functionality, include EACH of those as a separate numbered step with the shell command to run.
+If the user mentions git operations (commit, init, add), include EACH git command as a separate numbered step.
+Example: "4. Run: git init", "5. Run: git add file1.py", "6. Run: git commit -m 'message
+
+Co-authored-by: Qwen-Coder <qwen-coder@alibabacloud.com>'"
+PEER CLI STEPS: If the user says "ask claude to X", "use gemini to X", "have qwen do X", etc., copy that as a step EXACTLY: "Ask claude to X". Never rephrase peer delegation steps as "Create X" or "Write X".
 NEVER create .db files (sqlite3.connect() creates them automatically).
 NEVER use port 8080 (reserved). Use 8765 or 9000.
 Output ONLY the numbered list."""
@@ -23,6 +28,12 @@ COMPLEX_SIGNALS = [
     'add', 'and then', 'then run', 'also', 'multiple',
     'class', 'module', 'app', 'application', 'system', 'api',
     'with tests', 'and test', 'and run',
+    'git commit', 'git init', 'git add', 'initialize git', 'commit',
+    # Peer CLI delegation — each peer name counts as a complexity signal
+    'ask claude', 'ask gemini', 'ask qwen',
+    'use claude', 'use gemini', 'use qwen',
+    'have claude', 'have gemini', 'have qwen',
+    'call claude', 'call gemini', 'call qwen',
 ]
 
 # Conversational patterns that should NOT trigger orchestration
@@ -111,11 +122,14 @@ def parse_task_list(model_output):
         m = re.match(r'^(\d+)[.)\s]+(.+)$', line)
         if m and len(m.group(2)) > 5:
             tasks.append(m.group(2).strip())
-    return _postprocess_plan(tasks[:5])
+    return _postprocess_plan(tasks[:8])
 
 
 # Filename extraction pattern
 _FILE_RE = re.compile(r'\b([\w][\w\-]*\.(?:py|js|ts|html|css|json|yaml|yml|toml|txt|md|sh))\b')
+
+
+_RUN_STEP_RE = re.compile(r'^run\b', re.IGNORECASE)
 
 
 def _postprocess_plan(tasks):
@@ -124,14 +138,24 @@ def _postprocess_plan(tasks):
 
     Recursive planning (Phase 4) self-corrects waste steps and quality,
     so this only handles structural deduplication.
+
+    Run: steps are never merged — running the same file twice is intentional
+    (e.g. "run it again to verify"). Only Create/Write/Update steps are
+    deduplicated by shared filename.
     """
     if not tasks:
         return tasks
 
-    # Merge steps targeting the same file — keep the longer description
+    # Merge steps targeting the same file — keep the longer description.
+    # Run: steps are passed through unchanged so intentional duplicate runs
+    # (e.g. "run wordcount.py twice") are preserved.
     merged = []
     seen_files = {}  # filename -> index in merged list
     for t in tasks:
+        if _RUN_STEP_RE.match(t):
+            # Shell-command steps: always keep as-is, never deduplicate
+            merged.append(t)
+            continue
         files_in_step = _FILE_RE.findall(t)
         merged_into = None
         for f in files_in_step:
@@ -147,7 +171,7 @@ def _postprocess_plan(tasks):
             for f in files_in_step:
                 seen_files[f] = idx
 
-    return merged[:5]
+    return merged[:8]
 
 def plan_tasks(user_message, project_context=''):
     """

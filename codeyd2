@@ -79,15 +79,47 @@ try:
 except Exception:
     mmap_str = "mmap: unknown"
 
-if port_healthy(8080):
-    print(f"7B model:       loaded   ({mmap_str})")
-else:
-    print("7B model:       not loaded")
+try:
+    from utils.config import (
+        CODEY_BACKEND as _cb, CODEY_PLANNER_BACKEND as _pb,
+        is_remote_backend as _is_remote,
+        is_remote_planner_backend as _is_remote_planner,
+    )
+except Exception:
+    _cb = "local"
+    _pb = "local"
+    _is_remote = lambda: False
+    _is_remote_planner = lambda: False
 
-if port_healthy(8081):
-    print("Planner:        0.5B planning (port 8081)")
+try:
+    from utils.config import (
+        OPENROUTER_MODEL, OPENROUTER_PLANNER_MODEL,
+        UNLIMITEDCLAUDE_MODEL, UNLIMITEDCLAUDE_PLANNER_MODEL,
+    )
+except Exception:
+    OPENROUTER_MODEL = OPENROUTER_PLANNER_MODEL = "unknown"
+    UNLIMITEDCLAUDE_MODEL = UNLIMITEDCLAUDE_PLANNER_MODEL = "unknown"
+
+# Coder line
+if _is_remote():
+    _coder_m = UNLIMITEDCLAUDE_MODEL if _cb == "unlimitedclaude" else OPENROUTER_MODEL
+    print(f"7B model:       {_cb} ({_coder_m})")
 else:
-    print("Planner:        0.5B not loaded (port 8081)")
+    if port_healthy(8080):
+        print(f"7B model:       loaded   ({mmap_str})")
+    else:
+        print("7B model:       not loaded")
+
+# Planner line
+if _is_remote_planner():
+    _planner_m = UNLIMITEDCLAUDE_PLANNER_MODEL if _pb == "unlimitedclaude" else OPENROUTER_PLANNER_MODEL
+    _planner_suffix = f" [{_pb}]" if _pb != _cb else ""
+    print(f"Planner:        {_pb} ({_planner_m}){_planner_suffix}")
+else:
+    if port_healthy(8081):
+        print("Planner:        0.5B local (port 8081)")
+    else:
+        print("Planner:        0.5B not loaded (port 8081)")
 PYEOF
 
     if $main_running; then
@@ -193,6 +225,14 @@ stop_daemon() {
 # ── Planner daemon (plannd) ────────────────────────────────────────────────────
 
 start_plannd() {
+    # Skip when planner backend is remote — no local 0.5B server needed.
+    # CODEY_BACKEND_P takes precedence; falls back to CODEY_BACKEND.
+    _pb="${CODEY_BACKEND_P:-${CODEY_BACKEND:-local}}"
+    if [ "$_pb" = "openrouter" ] || [ "$_pb" = "unlimitedclaude" ]; then
+        echo "Planner backend: ${_pb} — skipping 0.5B planner startup"
+        return 0
+    fi
+
     if [ -f "$PLANND_PID_FILE" ]; then
         PID=$(cat "$PLANND_PID_FILE" 2>/dev/null || echo "")
         if [ -n "$PID" ] && kill -0 "$PID" 2>/dev/null; then

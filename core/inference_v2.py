@@ -13,7 +13,7 @@ import time
 from typing import Optional, Dict, Any
 
 from utils.logger import info, error, warning, success
-from utils.config import MODEL_CONFIG
+from utils.config import MODEL_CONFIG, CODEY_BACKEND, is_remote_backend
 from core.loader_v2 import get_loader
 from rich.console import Console
 import sys
@@ -38,13 +38,22 @@ def _get_chat_backend():
     """Get chat completions backend (lazy initialization)."""
     global _chat_backend
     if _chat_backend is None:
-        try:
-            from core.inference_hybrid import get_hybrid_backend
-            _chat_backend = get_hybrid_backend()
-            info(f"Backend: {_chat_backend.backend_name}")
-        except Exception as e:
-            warning(f"Chat backend init failed: {e}, using HTTP fallback")
-            _chat_backend = "http_fallback"
+        if is_remote_backend():
+            try:
+                from core.inference_openrouter import get_remote_backend
+                _chat_backend = get_remote_backend()
+                info(f"Backend: {_chat_backend.backend_name}")
+            except Exception as e:
+                warning(f"Remote backend init failed: {e}, using HTTP fallback")
+                _chat_backend = "http_fallback"
+        else:
+            try:
+                from core.inference_hybrid import get_hybrid_backend
+                _chat_backend = get_hybrid_backend()
+                info(f"Backend: {_chat_backend.backend_name}")
+            except Exception as e:
+                warning(f"Chat backend init failed: {e}, using HTTP fallback")
+                _chat_backend = "http_fallback"
     return _chat_backend
 
 
@@ -68,10 +77,11 @@ def infer(messages: list[dict], stream: bool = False, extra_stop: list = None,
     """
     global last_tps
 
-    # Ensure model is loaded
-    loader = get_loader()
-    if not loader.ensure_model():
-        return "[ERROR] Failed to load model"
+    # Skip local loader when using a remote backend
+    if not is_remote_backend():
+        loader = get_loader()
+        if not loader.ensure_model():
+            return "[ERROR] Failed to load model"
 
     # Try chat completions backend (v2.6.0)
     if use_hybrid:

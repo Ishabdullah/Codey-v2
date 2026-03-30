@@ -199,7 +199,7 @@ core/agent.py: run_agent()
     |                            ↓ tool found
     |                    execute_tool() → TOOLS dict
     |                            ↓
-    |                    [loop up to 6 steps]
+    |                    [loop up to 10 steps]
     |
     ↓
 is_qa=True: infer(stream=True, max_tokens=512)
@@ -236,7 +236,7 @@ Total context: 32768 tokens
 | **Total fixed overhead** | ~2300 tokens |
 | **Available for conversation** | ~28420 tokens |
 
-Summarization triggers at 75% of n_ctx (~24576 tokens used). The `/summarize` command forces early summarization.
+Summarization triggers at 55% of n_ctx (~18022 tokens used) and drops turns until usage falls to 40%. The `/summarize` command forces early summarization.
 
 ---
 

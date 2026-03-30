@@ -164,15 +164,37 @@ class PeerCLIManager:
         return None
 
     def build_prompt(self, user_message: str, errors: List[str], files: List[str]) -> str:
-        """Build a context-rich prompt to pass to the external CLI."""
-        lines = [f"I need help with the following task: {user_message}"]
+        """Build a context-rich, directive prompt to pass to the external CLI.
+
+        Requirements:
+        - State what Codey already tried and failed at
+        - Explicitly request complete file content (not analysis, not a diff)
+        - Specify the exact output format Codey will parse to extract code
+        - Forbid asking questions or seeking confirmation
+        """
+        lines = [
+            f"Task: {user_message}",
+            "",
+            "Codey-v2 has already attempted this and exhausted its retry budget.",
+            "You are responding to an automated system. Do NOT ask for permission.",
+            "Do NOT ask clarifying questions. Act immediately.",
+        ]
         if files:
-            lines.append(f"\nRelevant files: {', '.join(f for f in files if f)}")
+            lines.append(f"\nFiles involved: {', '.join(f for f in files if f)}")
         if errors:
-            lines.append("\nPrevious attempts by Codey-v2 failed with these errors:")
+            lines.append("\nErrors from Codey's previous attempts:")
             for e in errors[-3:]:
                 lines.append(f"  • {e[:300]}")
-        lines.append("\nPlease help resolve this.")
+        lines.append(
+            "\nOUTPUT FORMAT (required — Codey parses this automatically):\n"
+            "For each file to create or modify, use this exact format:\n\n"
+            "**`filename.py`**\n"
+            "```python\n"
+            "# complete file content here\n"
+            "```\n\n"
+            "Write COMPLETE file content — no stubs, no placeholders, no '...'.\n"
+            "Codey will write these files to disk automatically."
+        )
         return "\n".join(lines)
 
     def confirm(

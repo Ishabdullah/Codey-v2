@@ -143,7 +143,16 @@ def _try_daemon_plan(prompt: str, no_plan: bool = False):
         from core.daemon import is_daemon_running, send_command
         if not is_daemon_running():
             return None
-        info("Requesting plan from 0.5B planner...")
+        try:
+            from utils.config import is_remote_planner_backend, CODEY_PLANNER_BACKEND
+            from utils.config import OPENROUTER_PLANNER_MODEL, UNLIMITEDCLAUDE_PLANNER_MODEL
+            if is_remote_planner_backend():
+                pm = UNLIMITEDCLAUDE_PLANNER_MODEL if CODEY_PLANNER_BACKEND == "unlimitedclaude" else OPENROUTER_PLANNER_MODEL
+                info(f"Requesting plan from {CODEY_PLANNER_BACKEND} planner ({pm})...")
+            else:
+                info("Requesting plan from 0.5B planner...")
+        except Exception:
+            info("Requesting plan from planner...")
         response = send_command(
             "command",
             {"prompt": prompt, "no_plan": False, "plan_only": True},
@@ -197,6 +206,36 @@ def _run_with_plan(prompt: str, history: list, yolo: bool, use_plan: bool, no_pl
     from pathlib import Path
     import os
 
+    # ── Peer delegation gate ──────────────────────────────────────────────────
+    # For SINGLE-STEP peer directives ("ask claude to X" with no follow-up),
+    # skip plannd and route straight to run_agent — the _detect_peer_delegation
+    # path in agent.py handles it directly.
+    #
+    # For MULTI-STEP prompts ("Use Gemini to design X. Then use Qwen to
+    # implement it."), fall through to plannd so ALL steps get planned and
+    # executed in sequence. plannd Rule 8 preserves "Ask gemini to X" phrasing,
+    # and filter_tool_steps keeps peer steps in the plan.
+    _PEER_NAMES = ["claude", "gemini", "qwen"]
+    _peer_directive_re = re.compile(
+        r'\b(?:ask|call|have|tell|use|get|let)\s+(' + '|'.join(_PEER_NAMES) + r')\b',
+        re.IGNORECASE,
+    )
+    # Multi-step signals: sentence-boundary transition words, or more than one peer mentioned
+    _MULTI_STEP_RE = re.compile(
+        r'[.!?\n]\s*\b(?:then|after(?:\s+that)?|also|additionally|next|finally|'
+        r'and\s+(?:run|show|test|verify|use|ask|have|call|write|create|commit|init))\b',
+        re.IGNORECASE,
+    )
+    _peer_hits = _peer_directive_re.findall(prompt)
+    _is_solo_peer = (
+        bool(_peer_hits)
+        and len(set(h.lower() for h in _peer_hits)) == 1  # only one peer mentioned
+        and not _MULTI_STEP_RE.search(prompt)              # no multi-step signals
+    )
+    if not no_plan and _is_solo_peer:
+        return run_agent(prompt, history, yolo=yolo, use_plan=use_plan, no_plan=no_plan)
+    # Multi-peer or multi-step peer prompts fall through to plannd below
+
     plan = _try_daemon_plan(prompt, no_plan)
 
     if plan:
@@ -234,8 +273,20 @@ def _run_with_plan(prompt: str, history: list, yolo: bool, use_plan: bool, no_pl
                     if not target.exists():
                         warning(f"Step {i}: '{fname}' not found after step — retrying")
                         console.print(f"\n[dim]↺  Step {i}/{len(plan)} retry (file not created)[/dim]")
-                        step_resp, history = run_agent(step, history, yolo=yolo, no_plan=True,
-                                                       _plan_rag_block=_plan_rag)
+                        # Pass context about what failed so the agent knows to address
+                        # root cause (e.g. it modified the wrong file) rather than just
+                        # repeating the same action.
+                        _prev_summary = (step_resp or "")[:300]
+                        _retry_prefix = (
+                            f"RETRY: The previous attempt did not create '{fname}'. "
+                            f"Previous result: {_prev_summary}. "
+                            f"You MUST create '{fname}' using write_file. "
+                            "Do not patch or modify any other files.\n\n"
+                        )
+                        step_resp, history = run_agent(
+                            _retry_prefix + step, history, yolo=yolo, no_plan=True,
+                            _plan_rag_block=_plan_rag,
+                        )
                         response = step_resp or response
 
         return response, history
@@ -1031,9 +1082,11 @@ def repl(initial_prompt=None, yolo=False, one_shot=False, preload=None, plan=Fal
     monitor = get_monitor()
     monitor.start()
 
-    # v2: Use loader_v2 to ensure model is available
-    loader = get_loader()
-    loader.load_primary()
+    # v2: Use loader_v2 to ensure model is available (skip for remote backends)
+    from utils.config import is_remote_backend
+    if not is_remote_backend():
+        loader = get_loader()
+        loader.load_primary()
 
     from core.project import detect_project
     from core.codeymd import find_codeymd

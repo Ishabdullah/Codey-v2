@@ -80,8 +80,8 @@ def _is_pinned(msg: dict) -> bool:
 
 def _call_05b(dropped_msgs: list[dict]) -> str | None:
     """
-    Ask the 0.5B model on port 8081 to summarize the dropped messages.
-    Returns the summary string or None if the model is unavailable.
+    Summarize dropped messages using the 0.5B on port 8081, or OpenRouter
+    when CODEY_BACKEND=openrouter.  Returns the summary string or None.
     """
     if not dropped_msgs:
         return None
@@ -91,12 +91,30 @@ def _call_05b(dropped_msgs: list[dict]) -> str | None:
         for m in dropped_msgs
     )
 
+    messages = [
+        {"role": "system", "content": _MICRO_SUMMARY_SYSTEM},
+        {"role": "user",   "content": f"Conversation:\n{history_text}"},
+    ]
+
+    # Route to remote planner backend when active — avoids needing the local 0.5B server
+    try:
+        from utils.config import is_remote_planner_backend, CODEY_PLANNER_BACKEND
+        if is_remote_planner_backend():
+            from core.inference_openrouter import get_remote_backend
+            backend = get_remote_backend(CODEY_PLANNER_BACKEND)
+            result = backend.infer(messages, max_tokens=160, stream=False)
+            if result:
+                text, _, _ = result
+                return text if text else None
+            return None
+    except Exception as e:
+        warning(f"[summarizer] remote micro-summary failed: {e}")
+        return None
+
+    # Local 0.5B path
     payload = {
         "model": "codey-planner",
-        "messages": [
-            {"role": "system", "content": _MICRO_SUMMARY_SYSTEM},
-            {"role": "user",   "content": f"Conversation:\n{history_text}"},
-        ],
+        "messages": messages,
         "max_tokens": 160,
         "temperature": 0.2,
         "stream": False,

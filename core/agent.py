@@ -462,6 +462,38 @@ def check_git_and_offer_commit(user_message, tools_used):
         else:
             success(f"Committed: {msg}")
 
+def _extract_peer_output_from_history(history: list, peer_name: str) -> str:
+    """
+    Scan conversation history backwards for the most recent output from a named
+    peer CLI.  Returns the content string if found, or "" if not found.
+
+    Matches the format produced by PeerCLIManager.summarize_result():
+      "[Peer CLI — {peer_name}]\nTask: ...\nOutput:\n..."
+
+    Fallback: if not in history (e.g. session resumed after compression),
+    reads {peer_name}_design.md from the current working directory.
+    """
+    prefix = f"[Peer CLI — {peer_name.lower()}]"
+    for msg in reversed(history):
+        if msg.get("role") == "assistant":
+            content = msg.get("content", "")
+            if content.lower().startswith(prefix):
+                return content
+    # Disk fallback — design tasks write raw output here for cross-step durability
+    import os as _os
+    _design_path = _os.path.join(_os.getcwd(), f"{peer_name.lower()}_design.md")
+    if _os.path.exists(_design_path):
+        try:
+            with open(_design_path, "r", encoding="utf-8") as _df:
+                _content = _df.read().strip()
+            if _content:
+                info(f"[peer] Loaded {peer_name} design from {peer_name.lower()}_design.md (history fallback)")
+                return _content
+        except Exception:
+            pass
+    return ""
+
+
 def _detect_peer_delegation(user_message: str):
     """
     Detect phrases like:
@@ -496,59 +528,84 @@ def _detect_peer_delegation(user_message: str):
     return None, None
 
 
-def _auto_apply_peer_code(peer_output):
+def _auto_apply_peer_code(peer_output, context_message=""):
     """
     Extract code blocks from peer CLI output and write them to disk.
 
-    Looks for patterns like:
-      **`app.py`** — description
+    Primary pattern — filename header before a code block:
+      **`app.py`** — description        **app.py**        `app.py`:
       ```python
       code...
       ```
 
-    Or:
-      **app.py**
-      ```python
-      code...
-      ```
+    Fallback pattern — bare triple-backtick block with no filename header.
+    When no filename is found in the block, the expected filename is inferred
+    from `context_message` (the original user request).  Only the first
+    qualifying bare block is used to avoid writing ambiguous files.
 
     Returns list of filenames written, or empty list if none found.
     """
     import os
     files_written = []
+    _CODE_EXTS = ('.py', '.js', '.ts', '.html', '.css', '.json')
 
-    # Pattern: filename header followed by a code block
-    # Matches: **`filename.py`** or **filename.py** or `filename.py`:
+    def _safe_write(fname, code):
+        """Syntax-check (Python only), then write via safety layer."""
+        if fname.endswith('.py'):
+            try:
+                from core.linter import check_syntax
+                if check_syntax(code.rstrip(), fname):
+                    return False  # syntax error — skip
+            except Exception:
+                pass
+        fpath = os.path.join(os.getcwd(), fname)
+        result = tool_write_file(fpath, code.rstrip() + '\n')
+        if result.startswith("[ERROR]") or result.startswith("[CANCELLED]"):
+            warning(f"Failed to write {fname} from peer: {result}")
+            return False
+        files_written.append(fname)
+        success(f"Written {fname} from peer review ({len(code)} chars)")
+        return True
+
+    # ── Primary: filename header immediately before a fenced code block ──────
     _block_re = re.compile(
-        r'(?:\*{1,2}`?(\w+\.\w+)`?\*{0,2}|`(\w+\.\w+)`:?)\s*(?:—[^\n]*)?\s*\n'
+        r'(?:\*{1,2}`?(\w[\w.\-]*\.\w+)`?\*{0,2}|`(\w[\w.\-]*\.\w+)`:?)'
+        r'\s*(?:—[^\n]*)?\s*\n'
         r'```(?:\w+)?\n(.*?)```',
-        re.DOTALL
+        re.DOTALL,
     )
-
     for m in _block_re.finditer(peer_output):
         fname = m.group(1) or m.group(2)
         code = m.group(3)
         if not fname or not code or len(code.strip()) < 50:
             continue
-        # Only write code files
-        if not any(fname.endswith(ext) for ext in ('.py', '.js', '.ts', '.html', '.css', '.json')):
+        if not any(fname.endswith(ext) for ext in _CODE_EXTS):
             continue
-        # Syntax check for Python files
-        if fname.endswith('.py'):
-            try:
-                from core.linter import check_syntax
-                if check_syntax(code.rstrip(), fname):
-                    continue  # Skip files with syntax errors
-            except Exception:
-                pass
-        # Write the file through the safety layer (workspace boundary, write-protection, etc.)
-        fpath = os.path.join(os.getcwd(), fname)
-        _write_result = tool_write_file(fpath, code.rstrip() + '\n')
-        if _write_result.startswith("[ERROR]") or _write_result.startswith("[CANCELLED]"):
-            warning(f"Failed to write {fname} from peer: {_write_result}")
-            continue
-        files_written.append(fname)
-        success(f"Written {fname} from peer review ({len(code)} chars)")
+        _safe_write(fname, code)
+
+    # ── Fallback: bare fenced blocks — infer filename from context ────────────
+    # Only runs when the primary pass wrote nothing.
+    if not files_written:
+        _expected_fname = None
+        if context_message:
+            _fname_re = re.compile(
+                r'\b([\w][\w\-]*\.(?:py|js|ts|html|css|json))\b'
+            )
+            _m = _fname_re.search(context_message)
+            if _m:
+                _expected_fname = _m.group(1)
+
+        if _expected_fname and any(_expected_fname.endswith(ext) for ext in _CODE_EXTS):
+            _bare_re = re.compile(
+                r'```(?:python|py|javascript|js|typescript|ts|html|css|json)?\n(.*?)```',
+                re.DOTALL,
+            )
+            for m in _bare_re.finditer(peer_output):
+                code = m.group(1)
+                if not code or len(code.strip()) < 50:
+                    continue
+                if _safe_write(_expected_fname, code):
+                    break  # first qualifying block only
 
     return files_written
 
@@ -580,7 +637,101 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                     "correct", "validate", "look at", "is it right", "did i"
                 }
                 _is_review = any(k in _peer_task.lower() for k in _REVIEW_KW)
-                _enriched_task = _peer_task
+
+                # ── Design-only phase detection ───────────────────────────────
+                # When the peer is asked to "design / plan / spec / outline"
+                # without any implement/build/code verb, we use prose instructions
+                # and save the output as a .md design document instead of trying
+                # to extract code blocks — which would corrupt the pipeline.
+                _STRONG_DESIGN = re.compile(
+                    r'\b(design|plan|spec(?:ify)?|specification|outline|blueprint|'
+                    r'architecture|feature\s+list|roadmap|requirements?)\b',
+                    re.IGNORECASE,
+                )
+                _STRONG_IMPLEMENT = re.compile(
+                    r'\b(implement|build|code|develop|program|write\s+(?:code|it|the)|'
+                    r'make\s+it\s+work|working\s+version)\b',
+                    re.IGNORECASE,
+                )
+                _is_design_only = (
+                    not _is_review  # review tasks always use code output format
+                    and bool(_STRONG_DESIGN.search(_peer_task))
+                    and not bool(_STRONG_IMPLEMENT.search(_peer_task))
+                )
+
+                # Output format instructions — Codey extracts code blocks to write files.
+                # Claude -p returns plain text; without explicit format instructions it
+                # asks for permission or returns prose instead of extractable code.
+                _FORMAT_INSTRUCTIONS = (
+                    "\n\nOUTPUT FORMAT (required — Codey will parse this automatically):\n"
+                    "You are responding to an automated system. Do NOT ask for permission.\n"
+                    "Do NOT ask clarifying questions. Act immediately.\n"
+                    "For each file to create or modify, output it using this exact format:\n\n"
+                    "**`filename.py`**\n"
+                    "```python\n"
+                    "# complete file content here\n"
+                    "```\n\n"
+                    "Use the correct language tag for non-Python files (javascript, json, etc.).\n"
+                    "Write COMPLETE file content — no stubs, no placeholders, no '...'.\n"
+                    "Codey will write these files to disk automatically."
+                )
+                # Design tasks: ask for prose, NOT code blocks.
+                # Code blocks in design output are misinterpreted by _auto_apply_peer_code.
+                _DESIGN_INSTRUCTIONS = (
+                    "\n\nOUTPUT FORMAT:\n"
+                    "You are responding to an automated system. Write a clear, detailed design "
+                    "specification in prose and markdown.\n"
+                    "Do NOT write any code. Do NOT include code blocks (no triple backticks).\n"
+                    "For data structures or schemas, describe them in plain text or markdown "
+                    "tables — NOT code blocks.\n"
+                    "Describe: features, CLI commands and their arguments, data model, "
+                    "behavior, edge cases, and any constraints.\n"
+                    "Your output will be saved as a design document for another AI to implement from."
+                )
+
+                _enriched_task = (
+                    f"Task: {_peer_task}"
+                    + (_DESIGN_INSTRUCTIONS if _is_design_only else _FORMAT_INSTRUCTIONS)
+                )
+
+                # ── Multi-peer output passing ─────────────────────────────────
+                # Only relevant for implementation steps that reference a prior peer's design.
+                # Design steps (step 1 of a pipeline) never have a prior peer to inject.
+                if not _is_design_only:
+                    _OTHER_PEERS = [p for p in ["claude", "gemini", "qwen"] if p != _peer_name]
+                    _referenced_peer = None
+                    for _op in _OTHER_PEERS:
+                        if _op in _peer_task.lower():
+                            _referenced_peer = _op
+                            break
+                    # Also catch implicit references ("the previous design", "what was planned")
+                    if not _referenced_peer:
+                        _IMPLICIT_REF = re.compile(
+                            r'\b(previous\s+(?:design|plan|output|step|result)|'
+                            r'what\s+was\s+(?:designed|planned|created)|'
+                            r'the\s+(?:design|plan|spec|feature\s+list)\s+(?:above|from\s+before|provided))\b',
+                            re.IGNORECASE,
+                        )
+                        if _IMPLICIT_REF.search(_peer_task):
+                            # Take the most recent peer output of any other peer
+                            for _op in _OTHER_PEERS:
+                                _candidate = _extract_peer_output_from_history(history, _op)
+                                if _candidate:
+                                    _referenced_peer = _op
+                                    break
+                    if _referenced_peer:
+                        _prior_output = _extract_peer_output_from_history(history, _referenced_peer)
+                        if _prior_output:
+                            info(f"Injecting {_referenced_peer}'s previous output into {_peer_name}'s context")
+                            _enriched_task = (
+                                f"Task: {_peer_task}\n\n"
+                                f"Context from {_referenced_peer.capitalize()}'s previous output "
+                                f"(use this as your specification):\n\n"
+                                f"{_prior_output}\n\n"
+                                f"Your task: {_peer_task}"
+                                + _FORMAT_INSTRUCTIONS
+                            )
+
                 if _is_review:
                     # Data-privacy gate: warn before sending local file contents
                     # to an external AI service. This is explicit and opt-in.
@@ -607,17 +758,16 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                             except Exception:
                                 pass
                     if _file_parts:
-                        # Find the original goal from history or current message
+                        # Use the current user message as the task — do NOT override
+                        # from history.  A resumed session may have old messages that
+                        # would replace the current task with an unrelated one.
                         _orig_goal = user_message
-                        for _hm in reversed(history):
-                            if _hm["role"] == "user" and len(_hm["content"]) > 80:
-                                _orig_goal = _hm["content"][:800]
-                                break
                         _enriched_task = (
-                            f"Original task that was worked on:\n{_orig_goal}\n\n"
-                            "Current state of project files:\n\n"
+                            f"Task: {_orig_goal}\n\n"
+                            "Current project files for context:\n\n"
                             + "\n\n".join(_file_parts[:6])
-                            + f"\n\nPlease: {_peer_task}"
+                            + f"\n\nYou must: {_peer_task}"
+                            + _FORMAT_INSTRUCTIONS
                         )
 
                 info(f"Delegating to {_cli.description}: {_peer_task[:80]}")
@@ -631,23 +781,56 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                     history.append({"role": "user", "content": user_message})
                     history.append({"role": "assistant", "content": _summary})
 
+                    # ── Design-only: save prose output to {peer}_design.md ────
+                    # For design tasks we skip _auto_apply_peer_code entirely —
+                    # code-block extraction would corrupt a markdown spec that
+                    # contains data-structure examples in backtick blocks.
+                    if _is_design_only:
+                        import os as _os
+                        _design_fname = f"{_peer_name}_design.md"
+                        _design_path = _os.path.join(_os.getcwd(), _design_fname)
+                        try:
+                            with open(_design_path, "w", encoding="utf-8") as _dfile:
+                                _dfile.write(_output)
+                            success(f"Design saved to {_design_fname} ({len(_output)} chars)")
+                        except Exception as _de:
+                            warning(f"Could not save design file: {_de}")
+                        # Plan will handle the next step (implement from design)
+                        return _summary, history
+
                     # Auto-extract and write code blocks from peer output.
                     # The 7B local model struggles to parse large peer responses,
                     # so we extract ```python blocks with filenames and write them directly.
-                    _files_written = _auto_apply_peer_code(_output)
+                    _files_written = _auto_apply_peer_code(_output, user_message)
 
                     if _files_written:
                         from utils.logger import success as _suc
                         _suc(f"[Peer: {_peer_name}] done. Applied {len(_files_written)} file(s): {', '.join(_files_written)}")
-                        # Run tests if the peer provided test files
+                        # Run tests if the peer provided test files AND the original task
+                        # asked for them to be run.  Do this directly (no model inference)
+                        # so the step cannot be skipped by a weak or confused model.
                         _has_tests = any('test' in f.lower() for f in _files_written)
-                        if _has_tests:
+                        _run_requested = any(k in user_message.lower() for k in [
+                            "run", "show", "result", "execute", "test it",
+                        ])
+                        # When running as a plan step (no_plan=True), the plan itself
+                        # has a dedicated "Run:" follow-up step — don't spawn another one.
+                        if no_plan:
+                            return _summary, history
+                        if _has_tests and _run_requested:
                             _test_file = next(f for f in _files_written if 'test' in f.lower())
-                            _follow_up = (
-                                f"Original task: {user_message}\n\n"
-                                f"Files written from peer review: {', '.join(_files_written)}. "
-                                f"Run the tests now: python -m pytest {_test_file} -v 2>&1 || python -m unittest {_test_file.replace('.py','')} -v 2>&1"
-                            )
+                            _cmd = f"python -m pytest {_test_file} -v"
+                            info(f"Running tests: {_cmd}")
+                            _test_result = shell(_cmd, yolo=yolo)
+                            show_shell(_cmd, _test_result)
+                            history.append({"role": "user", "content": f"Run: {_cmd}"})
+                            history.append({"role": "assistant", "content": _test_result})
+                            return _test_result, history
+                        elif _has_tests:
+                            # Tests written but not explicitly requested — ask model
+                            _test_file = next(f for f in _files_written if 'test' in f.lower())
+                            _follow_up = f"Run: python -m pytest {_test_file} -v"
+                            return run_agent(_follow_up, history, yolo=yolo, _in_subtask=True)
                         else:
                             _follow_up = (
                                 f"Original task: {user_message}\n\n"
@@ -655,7 +838,7 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                                 "Verify ALL requirements from the original task are met. "
                                 "Summarize what was done in 2-3 sentences."
                             )
-                        return run_agent(_follow_up, history, yolo=yolo, _in_subtask=True)
+                            return run_agent(_follow_up, history, yolo=yolo, _in_subtask=True)
                     else:
                         # No code blocks found — fall back to asking agent to interpret
                         _follow_up = (
@@ -837,6 +1020,27 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
         response = clean_response(response)
         tool_dict = parse_tool_call(response)
 
+        # ── Malformed tool call: <tool> tag present but JSON failed to parse ──
+        # The model tried to call a tool but emitted invalid JSON (e.g. missing
+        # quote: {"name": patch_file"}).  Surface this as an explicit retry so
+        # the model sees the error — without this it silently falls through to
+        # the no-tool-call path and the step is skipped.
+        if not tool_dict and "<tool>" in response and auto_retries < max_retries:
+            auto_retries += 1
+            warning("Malformed tool call — JSON parse failed, retrying")
+            messages.append({"role": "assistant", "content": response})
+            messages.append({
+                "role": "user",
+                "content": (
+                    "Your tool call had invalid JSON (e.g. a missing quote or bracket). "
+                    "Fix the syntax and output ONLY a corrected <tool>...</tool> block.\n"
+                    "Example: <tool>\n"
+                    "{\"name\": \"write_file\", \"args\": {\"path\": \"x.py\", \"content\": \"code\"}}\n"
+                    "</tool>"
+                ),
+            })
+            continue
+
         # ── Recursive code-rescue: if recursive_infer produced good code as
         # prose (no tool call), extract the code block and synthesize write_file
         # directly — never ask the model again (prevents "YOUR CODE" placeholder).
@@ -940,11 +1144,12 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
                 auto_retries += 1
                 warning("Error detected — auto-retry " + str(auto_retries) + "/" + str(max_retries))
                 messages.append({"role": "assistant", "content": _format_tool_for_history(tool_dict)})
-                # If shell was blocked and user wants a file created, redirect to write_file
-                if name == "shell" and "Command blocked" in last_tool_result:
+                # If the user cancelled the command (declined confirmation), suggest
+                # write_file as an alternative when the task is about creating a file.
+                if name == "shell" and "[CANCELLED]" in last_tool_result:
                     _file_words = ["create", "write", "make", "build", "file", ".py", ".js", ".html", ".txt", ".md"]
                     if any(w in msg_low for w in _file_words):
-                        messages.append({"role": "user", "content": "Error: shell commands are blocked. Use the write_file tool instead to create the file. Output ONLY a <tool> block with write_file."})
+                        messages.append({"role": "user", "content": "Command was not run. Use the write_file tool instead to create the file. Output ONLY a <tool> block with write_file."})
                         continue
                 # FIX 3: argparse / usage errors mean the command was called wrong,
                 # not that the source code is broken.  Tell the model to re-run with

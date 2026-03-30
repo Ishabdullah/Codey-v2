@@ -71,7 +71,7 @@ class LayeredPrompt:
 
     Example:
         p = LayeredPrompt(budget_chars=12000)
-        p.add("identity", SYSTEM_PROMPT, priority=0, required=True)
+        p.add("identity", get_system_prompt(), priority=0, required=True)
         p.add("project",  codeymd_text,  priority=2)
         p.add("files",    file_block,    priority=4)
         system_prompt = p.build()
@@ -260,13 +260,13 @@ def _build_draft_prompt(user_message: str, plan_rag_block: str = "") -> str:
             and _draft_cache["files_hash"] == current_fh):
         return _draft_cache["prompt"]
 
-    from prompts.system_prompt import SYSTEM_PROMPT, CAPABILITIES_PROMPT
+    from prompts.system_prompt import get_system_prompt, CAPABILITIES_PROMPT
 
     # 20 000 chars ≈ 5 000 tokens — well within the 32 768-token context window.
     # Previously 12 000 left 80% of the context unused; raising this lets more
     # files, RAG results, and skill patterns fit without eviction.
     p = LayeredPrompt(budget_chars=20000)
-    p.add("identity",  SYSTEM_PROMPT,             priority=0, required=True)
+    p.add("identity",  get_system_prompt(),             priority=0, required=True)
 
     # Inject capabilities only when the user is asking about them
     _msg_low = user_message.lower() if user_message else ""
@@ -366,10 +366,10 @@ def _build_refine_prompt(
       3 Targeted retrieved docs (NEED_DOCS)
       4 Loaded files
     """
-    from prompts.system_prompt import SYSTEM_PROMPT
+    from prompts.system_prompt import get_system_prompt
 
     p = LayeredPrompt(budget_chars=20000)
-    p.add("identity", SYSTEM_PROMPT,             priority=0, required=True)
+    p.add("identity", get_system_prompt(),             priority=0, required=True)
     p.add("prefs",    _get_preferences_block(),   priority=1)
     p.add("project",  _get_project_block(),        priority=2)
 

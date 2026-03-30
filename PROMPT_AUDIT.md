@@ -1076,3 +1076,130 @@ if _target_files:
 ```
 
 **Why:** The hint block appended to every subtask prompt includes the concrete tool call example with the filename hardcoded — e.g. `Use write_file to create wc.py ... "path": "wc.py"`. When this used the step's filename (`wc.py` from the 0.5B plan) it was actively reinforcing the wrong name at the bottom of the prompt, overriding the correct `wordcount.py` in the Overall goal above. By sourcing the filename from the original request instead, the hint now matches what the user actually asked for.
+
+---
+
+---
+
+## SESSION 10 FINDINGS — 2026-03-28 (v10 prompts)
+
+### Task 1: fibonacci.py — PASS ✓
+
+**0.5B plan:**
+```
+1. Create fibonacci.py: accepts n, prints each Fibonacci number on its own line
+2. Run: python fibonacci.py 20
+```
+Plan correct. Correct filename, correct argument, output format in step 1.
+
+**7B execution:**
+- Step 1: `write_file` correct first attempt, code correct (`print(a)` inside loop) ✓
+- Step 2: `shell` ran `python fib.py 20`, output 20 numbers one per line ✓
+
+**Result: Task 1 completed correctly.**
+
+---
+
+### Task 2: wordcount.py — FAIL (planner + coder both fail)
+
+**User request (verbatim):**
+> "Create a script called wordcount.py that accepts a filename, counts words lines and characters, saves the result to a results.json file with a timestamp, and prints a clean summary. Run it on fibonacci.py twice, and verify results.json has 2 entries."
+
+**0.5B plan produced (v10):**
+```
+1. Create wordcount.py: accepts filename, counts words, lines, characters, saves result to out.txt, prints summary
+2. Run: python wordcount.py main.py
+```
+
+**0.5B failures:**
+
+#### 1. Wrong save target: invented `out.txt` instead of `results.json`
+**Grade impact: -3 points**
+
+The user explicitly said "saves the result to a **results.json** file." The planner wrote "saves result to **out.txt**" — invented a completely different name and format (`.txt` instead of `.json`). The FILENAME RULE block and rule 2 both say to copy filenames from the user's message word for word. Neither was followed. The model either didn't read the user message for this field, or defaulted to a plausible-sounding output file name from training data.
+
+#### 2. Wrong run target: invented `main.py` instead of `fibonacci.py`
+**Grade impact: -2 points**
+
+The user said "Run it on **fibonacci.py**". The planner wrote "Run: python wordcount.py **main.py**". `main.py` is a common generic filename from the prompt examples — the model copied it. The v10 FILENAME RULE ("If user says 'run it on fibonacci.py' → write 'fibonacci.py'. NEVER write 'main.py'") uses this exact wording and this exact filename. The model ignored it completely.
+
+#### 3. Missing JSON + timestamp feature in Create step
+**Grade impact: -1 point**
+
+The Create step lists "saves result to out.txt" — not only is the filename wrong, it dropped the timestamp entirely and changed the format from JSON to plain text. The user asked for JSON with a timestamp per entry. Rule 1 ("Include ALL of: input args, processing, file saves, timestamps") and the session 9 breakthrough (colon format capturing all features) both failed here. The model captured the save-to-file idea but lost the format and timestamp details.
+
+#### 4. Missing run-twice and verify steps
+**Grade impact: -1 point**
+
+The user asked to "run it on fibonacci.py **twice**" and "verify results.json has **2 entries**". The planner produced only one Run step and no Verify step. The session 9 fix that added two-Run-step support (confirmed working in session 9 task 2) did not carry over here. Plan was only 2 steps — the minimum — with no attempt at the verification requirement.
+
+**0.5B grade this session: D (3/10)**
+
+---
+
+**7B Step 1 (Create wordcount.py):**
+- `write_file` called, file written ✓ (format correct)
+- But: code wrote `content.count('\n')` using a **bare literal newline character inside the string** — not the escape sequence `\n`. This causes `SyntaxError: unterminated string literal` in Python 3.11+.
+- The 7B was given a truncated/wrong step 1 from the planner (no JSON, no timestamp requirement), so even if the syntax were correct, the file would have been wrong.
+
+**7B Step 2 (Run on wrong file):**
+- Shell ran `python wordcount.py main.py` — `main.py` doesn't exist → FileNotFoundError.
+- Retry loop generated the same broken `patch_file` call attempting to fix `content.count('\n')`. The patch used the same bare newline in `old_str`, so the SyntaxError recurred.
+- After max retries: escalated to Gemini CLI. Gemini returned a response but couldn't execute shell commands to verify the fix.
+
+**7B failures:**
+
+#### 1. Bare newline literal in string — SyntaxError
+**Grade impact: -3 points**
+
+Writing `'\n'` with an actual newline character (not the two-character escape) is a fundamental Python syntax error. The model generated broken Python. The retry loop re-generated the same broken patch twice — neither attempt fixed the issue. The patch's `old_str` also contained the bare newline, making it impossible to match and apply.
+
+#### 2. Missed all requirements from user's original message
+**Grade impact: -2 points**
+
+The coder ignored: `results.json` (saved to nothing), timestamps (not implemented), append-per-run semantics (not implemented), "run it twice" (ran once), "verify 2 entries" (never verified). The 7B's "Overall goal is authoritative" rule (v10 change) did not cause it to notice that the planner's step 1 was missing these features and self-correct. The 7B executed the plan step literally and did not cross-reference the user's original request.
+
+#### 3. Escalation to Gemini for a fixable SyntaxError
+**Grade impact: -1 point**
+
+The broken newline in the patch is a simple substitution error — replace the literal newline with `\\n`. Instead of generating a corrected `write_file` with the full working code, the agent exhausted retries and escalated to an external service. The escalation triggered without the coder ever attempting a full `write_file` rewrite fallback (which had worked in previous sessions).
+
+**7B grade this session: D+ (4/10)**
+
+---
+
+## KEY INSIGHTS SUMMARY (updated after session 10)
+
+| Issue | Model | Status | Severity |
+|---|---|---|---|
+| 0.5B copies filenames from examples — FILENAME RULE has no effect | 0.5B | 10 sessions unresolved | Critical |
+| 0.5B drops timestamp/format detail from Create step for complex tasks | 0.5B | Returned in s10 (was fixed s9) | Critical |
+| 7B "Done." skips error recovery | 7B | Not re-triggered s10 | High |
+| 7B writes bare newline literal in string — SyntaxError | 7B | New in s10 | High |
+| 7B does not cross-reference Overall goal against plan step | 7B | Not fixed by v10 rule | High |
+| 7B Create first-attempt text when file in context | 7B | Not re-triggered s10 | High |
+| 0.5B missing second Run step for "run twice" | 0.5B | Returned in s10 (was fixed s9) | Medium |
+| 0.5B Create step truncated to first feature | 0.5B | **Fixed ✓ (v9)** | — |
+| 7B extra tool calls after successful step | 7B | **Fixed ✓ (v9)** | — |
+| 7B Run: shell format — inline example fixed it | 7B | Fixed ✓ (v8) | — |
+| fibonacci: 6 consecutive correct runs | Both | Stable ✓ | — |
+| 7B Verify: format correct | 7B | Fixed ✓ (v6) | — |
+| 0.5B `<number>` placeholder | 0.5B | Fixed ✓ (v4) | — |
+
+---
+
+## CHANGES APPLIED — 2026-03-28 (v10 → v11)
+
+**0.5B (`core/plannd.py · PLANNER_PROMPT`):**
+
+1. **Added dedicated `FILENAME RULE` block before RULES.** Placed between STEP TEMPLATES and RULES — the most prominent position for a rule the model must apply to every step. Uses the exact filenames from the failing session as concrete examples:
+   - "If user says 'results.json' → write 'results.json'. NEVER write 'out.json' or 'out.txt'."
+   - "If user says 'run it on fibonacci.py' → write 'fibonacci.py'. NEVER write 'main.py'."
+   - "NEVER copy filenames from the examples below." — explicitly calls out the failure mode.
+
+2. **Changed second example filenames to clearly non-generic names.** Replaced `wc.py`/`main.py`/`out.json` with `xform.py`/`corpus.txt`/`tally.json`. These names don't appear in common coding tasks or Python training data, making template-matching less likely. The example task is also structurally different (token counting instead of word counting) to reduce similarity to the typical wordcount request.
+
+3. **Strengthened rule 2.** Added "NEVER use a filename from the examples" directly in the rule text as a second sentence — the model has both the FILENAME RULE block and the inline rule reinforcing the same constraint.
+
+**Why `FILENAME RULE` first:** From session history, rules placed inline in RULES (rule 2) have been ignored repeatedly. The FILENAME RULE block before RULES gives the constraint a dedicated heading and maximum token-position weight — the model sees it before it sees any step templates or examples.
+

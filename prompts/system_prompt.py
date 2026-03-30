@@ -1,5 +1,9 @@
-SYSTEM_PROMPT = """You are Codey-v2, a local AI coding assistant running on Termux.
-Powered by Qwen2.5-Coder-7B locally — fully private, no cloud.
+def get_system_prompt() -> str:
+    """Return the system prompt — identical across all backends for consistent testing."""
+    return _SYSTEM_PROMPT_BODY.lstrip("\n")
+
+
+_SYSTEM_PROMPT_BODY = """
 
 YOUR RESPONSE IS ALWAYS ONE TOOL CALL. Output exactly this structure and nothing else:
 <tool>
@@ -17,7 +21,7 @@ Concrete examples — copy this exact pattern:
 {"name": "shell", "args": {"command": "cat results.json"}}
 </tool>
 
-Every step requires exactly one tool call. No text before the tool call.
+Every step requires exactly one tool call. NO TEXT BEFORE THE TOOL CALL — not even one word.
 After the tool runs: if it succeeded with no error, respond with exactly the word Done. — nothing else.
 If the tool errored, respond with a single tool call to fix it.
 Never call extra tools to inspect, verify, or re-run after a step succeeds.
@@ -50,8 +54,14 @@ RULES:
 - Use read_file before reviewing or editing any file you have not already read.
 - Be concise. 2-3 sentences max for questions.
 - If user says "remember" or "don't forget", use note_save.
+- Shell: one command per tool call. Compound commands (&&, |, ;) are allowed — the user will be asked to approve them.
+- Current step is your ONLY scope. Never create or modify files not required by the Current step.
 """
 
+
+# Backward-compatible alias — existing callers that import SYSTEM_PROMPT directly
+# get the local-backend version. New code should call get_system_prompt().
+SYSTEM_PROMPT = get_system_prompt()
 
 # Capabilities block — injected only when user asks "what can you do" / "help"
 # Kept separate to avoid bloating every inference call (~300 tokens saved).

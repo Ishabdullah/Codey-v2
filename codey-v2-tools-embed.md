@@ -605,3 +605,684 @@ Once the pipeline runs, the outputs plug directly into the existing Codey-v2 sys
 ---
 
 *Plan version: 1.0 — 2026-03-28. Awaiting approval before implementation begins.*
+
+---
+
+## 14. Dataset Strategy and Sources
+
+This section documents every selected dataset, why it was chosen, how each maps to
+Codey-v2 tool calls, and how it feeds the embedding pipeline.  All datasets listed
+below were verified against the HuggingFace Hub on 2026-03-28.
+
+---
+
+### 14.1 Dataset Selection Matrix
+
+| # | Dataset | HF Path | License | Size | Priority | Tool Coverage |
+|---|---------|---------|---------|------|----------|---------------|
+| 1 | Glaive Function Calling v2 | `glaiveai/glaive-function-calling-v2` | Apache-2.0 | ~113K | HIGH | `shell`, `write_file` |
+| 2 | Hermes Function-Calling v1 | `NousResearch/hermes-function-calling-v1` | Apache-2.0 | ~11K | HIGH | all tools |
+| 3 | APIGen / xLAM-60k (mirror) | `lockon/xlam-function-calling-60k` | CC-BY-4.0 | 60K | HIGH | `shell`, `write_file` |
+| 4 | argilla/apigen-function-calling | `argilla/apigen-function-calling` | CC-BY-4.0 | ~100K | HIGH | `shell`, `write_file` |
+| 5 | Python Code Instructions 18k | `iamtarun/python_code_instructions_18k_alpaca` | (none) | 18K | HIGH | `write_file`, `shell` |
+| 6 | Code Instructions 122k | `TokenBender/code_instructions_122k_alpaca_style` | Apache-2.0 | 122K | MEDIUM | `write_file` |
+| 7 | Instructional CodeSearchNet (Python) | `Nan-Do/instructional_code-search-net-python` | Apache-2.0 | ~100K | MEDIUM | `write_file`, `read_file` |
+| 8 | MBPP | `google-research-datasets/mbpp` | CC-BY-4.0 | ~1K | MEDIUM | `write_file`, `shell` |
+| 9 | HumanEval+ | `evalplus/humanevalplus` | Apache-2.0 | 164 | MEDIUM | `write_file`, `shell` |
+| 10 | BigCodeBench-Instruct | `bigcode/bigcodebench` | Apache-2.0 | 1140 | MEDIUM | `write_file`, `shell` |
+| 11 | HumanEvalPack | `bigcode/humanevalpack` | MIT | ~1K | LOW | `write_file` |
+| 12 | Alpaca-Cleaned | `yahma/alpaca-cleaned` | CC-BY-4.0 | ~52K | LOW | `write_file`, `note_save` |
+| 13 | OrcaAgentInstruct-1M | `microsoft/orca-agentinstruct-1M-v1` | CDLA-2.0 | ~1M | LOW | multi-tool |
+| 14 | Code-Feedback (OpenCodeInterpreter) | `m-a-p/Code-Feedback` | Apache-2.0 | ~68K | MEDIUM | `write_file`, `shell` |
+| 15 | BFCL Leaderboard data | `gorilla-llm/Berkeley-Function-Calling-Leaderboard` | Apache-2.0 | ~2.5K | LOW | `shell`, `write_file` |
+| 16 | **Synthetic: Termux CLI corpus** | custom-generated | MIT (own) | target 5K | CRITICAL | `shell` |
+| 17 | **Synthetic: multi-step coding** | custom-generated | MIT (own) | target 3K | HIGH | all tools |
+
+---
+
+### 14.2 Dataset Details
+
+---
+
+#### Dataset 1 — `glaiveai/glaive-function-calling-v2`
+**HF:** https://hf.co/datasets/glaiveai/glaive-function-calling-v2
+**License:** Apache-2.0 | **Size:** ~113K | **Downloads:** 70K+
+
+**Why useful for Codey-v2:**
+The largest freely available function-calling dataset. Each example contains a
+system prompt with JSON tool schemas, multi-turn conversations, and assistant turns
+that call functions with structured arguments. Directly analogous to the Codey-v2
+`<tool>{"name":..., "args":{...}}</tool>` format. High diversity of tool types and
+argument shapes. Actively used for training production-grade tool-calling models.
+
+**Schema:**
+```json
+{
+  "system": "SYSTEM: You are a helpful assistant with access to the following functions...\nFUNCTION: {\"name\": \"get_news\", ...}",
+  "chat": "USER: Get me some news about AI\nASSISTANT: <functioncall> {\"name\": \"get_news\", \"arguments\": {\"topic\": \"AI\"}}"
+}
+```
+
+**Transformation to Codey-v2 format:**
+1. Parse the `chat` field to extract the last USER turn as `"user"`.
+2. Extract `<functioncall>` JSON — map `"arguments"` → `"args"`.
+3. Map function name: generic API names (`get_weather`, `search_web`) → nearest
+   Codey-v2 tool.  Direct-execution functions (`run_code`, `execute_command`) →
+   `shell`.  File-output functions → `write_file`.
+4. Discard examples where the function name has no plausible Codey-v2 equivalent.
+
+**Name mapping table:**
+| Glaive function pattern | Codey-v2 tool |
+|------------------------|---------------|
+| `*execute*`, `*run*`, `*command*` | `shell` |
+| `*write*`, `*create_file*`, `*save*` | `write_file` |
+| `*read*`, `*open_file*`, `*get_file*` | `read_file` |
+| `*search_files*`, `*find_file*` | `search_files` |
+| `*remember*`, `*store*`, `*save_note*` | `note_save` |
+| Other (API calls, weather, etc.) | skip or `shell curl` fallback |
+
+**Example transformation:**
+```
+Raw:
+  USER: "Run the python script at /tmp/test.py"
+  ASSISTANT: <functioncall> {"name": "execute_code", "arguments": {"file": "/tmp/test.py"}}
+
+→ Codey-v2:
+  {
+    "user": "run the python script at /tmp/test.py",
+    "tool_calls": [
+      {"name": "shell", "args": {"command": "python /tmp/test.py"}}
+    ]
+  }
+```
+
+**Embedding strategy:**
+- Embed: `"{user} → shell {command}"` or `"{user} → write_file {path}"`
+- Chunk: one record per example (no sub-chunking)
+- Metadata: `source`, `original_function_name`, `quality`, `is_multi_turn`
+
+---
+
+#### Dataset 2 — `NousResearch/hermes-function-calling-v1`
+**HF:** https://hf.co/datasets/NousResearch/hermes-function-calling-v1
+**License:** Apache-2.0 | **Size:** ~11K | **Downloads:** 43K+
+
+**Why useful for Codey-v2:**
+High-quality curated dataset used to train the Hermes 2 Pro series — widely regarded
+as best-in-class for structured tool use.  Includes function-calling, JSON-mode, and
+agentic multi-step examples.  Smaller but higher signal-to-noise than Glaive.
+The JSON schema format closely mirrors Codey-v2's `args` dict structure.
+
+**Schema:**
+```json
+{
+  "conversations": [
+    {"role": "system", "content": "You are a function calling AI..."},
+    {"role": "user",   "content": "What's the weather in Paris?"},
+    {"role": "assistant", "content": "<tool_call>\n{\"name\": \"get_weather\", \"arguments\": {\"location\": \"Paris\"}}\n</tool_call>"}
+  ]
+}
+```
+
+**Transformation:**
+1. Extract `user` turn content as `"user"` field.
+2. Parse `<tool_call>` JSON block from assistant turn.
+3. Rename `"arguments"` → `"args"`.
+4. Apply name-mapping table (same as Dataset 1).
+5. Multi-turn examples: keep the first tool-calling turn only (or expand to
+   individual records if multi-step is desired).
+
+**Embedding strategy:**
+- Embed: `"{user_content} → {tool_name} {primary_arg_value}"`
+- Metadata: `source: hermes-v1`, `has_json_mode: bool`, `is_agentic: bool`
+
+---
+
+#### Dataset 3 — `lockon/xlam-function-calling-60k` (APIGen mirror)
+**HF:** https://hf.co/datasets/lockon/xlam-function-calling-60k
+**License:** CC-BY-4.0 | **Size:** 60K | **Downloads:** 5.8K
+
+**Why useful for Codey-v2:**
+Produced by Salesforce's APIGen pipeline — each example was verified through three
+stages: format checking, live function execution, and semantic verification. This
+makes it one of the highest-correctness function-calling datasets available.
+The ungated mirror (`lockon/`) avoids the gated access of the official Salesforce
+repo.  Strong coverage of chained/sequential tool calls.
+
+**Schema:**
+```json
+{
+  "query": "What is the current time in New York?",
+  "tools": "[{\"name\": \"get_time\", \"description\": \"...\", \"parameters\": {...}}]",
+  "answers": "[{\"name\": \"get_time\", \"arguments\": {\"location\": \"New York\"}}]"
+}
+```
+
+**Transformation:**
+1. `query` → `"user"` field.
+2. Parse `answers` JSON array — each entry becomes one tool call.
+3. Rename `"arguments"` → `"args"`.
+4. Apply name-mapping table.
+5. For chained calls (len(answers) > 1) → produce a `multi_step` record with
+   ordered `tool_calls` list.
+
+**Embedding strategy:**
+- Embed: `"{query} → {joined tool names and key args}"`
+- Metadata: `source: xlam-apigen`, `num_tools: int`, `tool_names: list`
+
+---
+
+#### Dataset 4 — `argilla/apigen-function-calling`
+**HF:** https://hf.co/datasets/argilla/apigen-function-calling
+**License:** CC-BY-4.0 | **Size:** ~100K | **Downloads:** 1.9K
+
+**Why useful for Codey-v2:**
+A merge of Salesforce xLAM-60k and argilla's own Synth-APIGen-v0.1, totalling
+100K+ examples. Provides volume redundancy and diversity across API domains.
+Ready-to-use parquet format with clean splits.
+
+**Transformation:** Same as Dataset 3 (shares the APIGen schema).
+
+**Embedding strategy:** Same as Dataset 3; deduplicate against Dataset 3 by
+instruction hash before inserting to avoid vector duplicates in FAISS.
+
+---
+
+#### Dataset 5 — `iamtarun/python_code_instructions_18k_alpaca`
+**HF:** https://hf.co/datasets/iamtarun/python_code_instructions_18k_alpaca
+**License:** none stated (upstream sahil2801) | **Size:** 18K | **Downloads:** 116K+
+
+**Why useful for Codey-v2:**
+Dense Python-focused instruction dataset. Each example has a natural language
+instruction and a complete Python code solution. Directly maps to the most common
+Codey-v2 `write_file` pattern: "write a Python function that does X."
+
+**Schema:**
+```json
+{
+  "instruction": "Write a Python function to check if a string is a palindrome",
+  "input": "",
+  "output": "def is_palindrome(s):\n    return s == s[::-1]",
+  "prompt": "Below is an instruction..."
+}
+```
+
+**Transformation:**
+1. `instruction` (lowercased) → `"user"`.
+2. `output` → `write_file` content, path inferred from instruction keywords.
+3. If `input` is non-empty, prepend to `output` as a comment or context block.
+4. Append `shell` run step if instruction says "run", "execute", or "test".
+
+**Example transformation:**
+```
+Raw:
+  instruction: "Write a Python function to check if a string is a palindrome"
+  output: "def is_palindrome(s):\n    return s == s[::-1]"
+
+→ Codey-v2:
+  {
+    "user": "write a python function to check if a string is a palindrome",
+    "tool_calls": [
+      {
+        "name": "write_file",
+        "args": {"path": "solution.py", "content": "def is_palindrome(s):\n    return s == s[::-1]\n"}
+      }
+    ]
+  }
+```
+
+**Embedding strategy:**
+- Embed: `"{instruction} → write_file solution.py"`
+- Metadata: `source: python-alpaca-18k`, `language: python`, `has_run_step: bool`
+
+---
+
+#### Dataset 6 — `TokenBender/code_instructions_122k_alpaca_style`
+**HF:** https://hf.co/datasets/TokenBender/code_instructions_122k_alpaca_style
+**License:** Apache-2.0 | **Size:** 122K | **Downloads:** 37K+
+
+**Why useful for Codey-v2:**
+Large multilingual code instruction dataset (~122K examples). Covers Python,
+JavaScript, Bash, SQL, and more. The Bash/shell subset is especially valuable for
+building `shell` tool call coverage across non-Termux CLI commands (which become
+training fodder after TermuxNormalizer post-processing).
+
+**Schema:** Alpaca-style (`instruction`, `input`, `output`).
+
+**Transformation:** Same as Dataset 5. Additional step: detect language from
+`output` code block; Bash outputs → `shell` tool call, others → `write_file`.
+
+**Language → tool mapping:**
+| Language in output | Tool |
+|-------------------|------|
+| bash, sh, zsh | `shell` |
+| Python, JS, TS, Ruby | `write_file` |
+| SQL | `shell` (via sqlite3 CLI) or `write_file` for .sql file |
+
+**Embedding strategy:**
+- Embed: `"{instruction} → {tool_name} {primary_arg}"`
+- Metadata: `language`, `source: code-instructions-122k`
+- Filter to English only via language detection.
+
+---
+
+#### Dataset 7 — `Nan-Do/instructional_code-search-net-python`
+**HF:** https://hf.co/datasets/Nan-Do/instructional_code-search-net-python
+**License:** Apache-2.0 | **Size:** ~100K | **Downloads:** 5.1K
+
+**Why useful for Codey-v2:**
+Built on CodeSearchNet — pairs real GitHub Python functions with natural language
+docstrings. Provides two task types: (a) code → description (useful for `read_file`
+pattern: "explain what this file does") and (b) description → code (→ `write_file`).
+The real-world code quality is higher than synthetic datasets.
+
+**Schema:**
+```json
+{
+  "instruction": "Write a function that [docstring summary]",
+  "response": "def func(...):\n    ..."
+}
+```
+
+**Transformation:**
+1. `instruction` → `"user"`.
+2. `response` → `write_file` content; path inferred from function name in response
+   (`def my_func` → `my_func.py`) or fallback to `solution.py`.
+
+**Embedding strategy:**
+- Embed: `"{instruction} → write_file {inferred_path}"`
+- Metadata: `source: codesearchnet-python`, `function_name`, `docstring_length`
+
+---
+
+#### Dataset 8 — `google-research-datasets/mbpp`
+**HF:** https://hf.co/datasets/google-research-datasets/mbpp
+**License:** CC-BY-4.0 | **Size:** ~974 | **Downloads:** 9M+
+
+**Why useful for Codey-v2:**
+MBPP (Mostly Basic Python Problems) is a gold-standard benchmark with human-verified
+task descriptions, canonical solutions, and 3 test cases per problem. The test cases
+enable a two-step `write_file` + `shell` pattern: write the solution, then verify
+with tests. This is the most realistic approximation of Codey-v2's actual coding
+workflow.
+
+**Schema:**
+```json
+{
+  "task_id": 1,
+  "text": "Write a function to find the minimum cost path to reach (m, n) from (0, 0)...",
+  "code": "def min_cost(cost, m, n): ...",
+  "test_list": ["assert min_cost([[1,2,3]], 2, 2) == 8", ...]
+}
+```
+
+**Transformation:**
+1. `text` → `"user"` (lowercased, strip leading "Write a").
+2. `code` → `write_file` content → `solution.py`.
+3. Build test file from `test_list` → second `write_file` → `test_solution.py`.
+4. Add `shell` call: `python test_solution.py`.
+5. This produces a **3-step multi-tool record** — high value for training
+   multi-step reasoning.
+
+**Example transformation:**
+```
+Raw:
+  text: "Write a Python function to find the maximum of two numbers."
+  code: "def max_of_two(a, b):\n    return a if a > b else b"
+  test_list: ["assert max_of_two(3, 4) == 4", "assert max_of_two(10, 2) == 10"]
+
+→ Codey-v2:
+  {
+    "user": "write a python function to find the maximum of two numbers",
+    "tool_calls": [
+      {"name": "write_file", "args": {"path": "solution.py", "content": "def max_of_two(a, b):\n    return a if a > b else b\n"}},
+      {"name": "write_file", "args": {"path": "test_solution.py", "content": "from solution import max_of_two\nassert max_of_two(3, 4) == 4\nassert max_of_two(10, 2) == 10\nprint('All tests passed')\n"}},
+      {"name": "shell",      "args": {"command": "python test_solution.py"}}
+    ]
+  }
+```
+
+**Embedding strategy:**
+- Embed: `"{text} → write_file + shell test"` (combined intent string)
+- Metadata: `source: mbpp`, `task_id`, `num_tests`, `is_multi_step: true`
+
+---
+
+#### Dataset 9 — `evalplus/humanevalplus`
+**HF:** https://hf.co/datasets/evalplus/humanevalplus
+**License:** Apache-2.0 | **Size:** 164 | **Downloads:** 497K+
+
+**Why useful for Codey-v2:**
+The hardened version of OpenAI HumanEval with 80× more test cases per problem.
+Small but authoritative. Each problem includes a function signature + docstring
+(clean instruction) and canonical solution. The extra tests make the 3-step
+`write_file` → `write_file` → `shell` pattern very reliable for validation.
+
+**Schema:**
+```json
+{
+  "task_id": "HumanEval/0",
+  "prompt": "from typing import List\ndef has_close_elements(numbers: List[float], threshold: float) -> bool:\n    \"\"\"...\"\"\"\n",
+  "canonical_solution": "    for ...",
+  "test": "def check(candidate):\n    assert candidate([1.0, 2.0], 0.5) == False\n    ...",
+  "entry_point": "has_close_elements"
+}
+```
+
+**Transformation:**
+1. Extract docstring from `prompt` → `"user"` field.
+2. Combine `prompt` + `canonical_solution` → `write_file` content → `solution.py`.
+3. Wrap `test` block → `write_file` → `test_solution.py`.
+4. Add `shell` → `python -m pytest test_solution.py` (or `python test_solution.py`).
+
+**Embedding strategy:**
+- Embed: `"{docstring_first_sentence} → write_file solution.py"`
+- Metadata: `source: humanevalplus`, `task_id`, `entry_point`
+
+---
+
+#### Dataset 10 — `bigcode/bigcodebench` (Instruct split)
+**HF:** https://hf.co/datasets/bigcode/bigcodebench
+**License:** Apache-2.0 | **Size:** 1140 | **Downloads:** 960K+
+
+**Why useful for Codey-v2:**
+BigCodeBench-Instruct features natural language (NL-oriented) prompts that require
+integrating multiple Python standard-library and third-party packages. Each example
+has 5–6 test cases and near-100% test coverage. This is the most realistic dataset
+for training Codey-v2 on "write a complete, working Python program" tasks.
+
+**Schema:**
+```json
+{
+  "task_id": "BigCodeBench/0",
+  "instruct_prompt": "Develop a function that parses a CSV and returns statistics...",
+  "canonical_solution": "import csv\nimport statistics\ndef parse_csv(path):\n    ...",
+  "test": "class TestParseCsv(unittest.TestCase):\n    ..."
+}
+```
+
+**Transformation:** Same 3-step pattern as MBPP (§Dataset 8).
+
+**Embedding strategy:**
+- Embed: `"{instruct_prompt} → write_file + shell test"`
+- Metadata: `source: bigcodebench`, `task_id`, `uses_stdlib: bool`
+
+---
+
+#### Dataset 11 — `bigcode/humanevalpack`
+**HF:** https://hf.co/datasets/bigcode/humanevalpack
+**License:** MIT | **Size:** ~984 (6 langs × 164) | **Downloads:** 2.4M+
+
+**Why useful for Codey-v2:**
+Multilingual extension of HumanEval covering Python, JS, Java, Go, C++, Rust.
+For Codey-v2 the Python split is the highest priority; JS is secondary (Node.js
+runs in Termux). Provides 3 task types: synthesis, fixing (patch), and explanation
+(read+describe). The **fixing** task maps directly to `patch_file`.
+
+**Transformation:**
+- Synthesis task → `write_file` (same as HumanEval+)
+- Fixing task: `buggy_solution` + `fix` → `patch_file` record:
+  ```json
+  {
+    "user": "fix the bug in solution.py",
+    "tool_calls": [
+      {"name": "patch_file", "args": {"path": "solution.py", "old_str": "<buggy>", "new_str": "<fixed>"}}
+    ]
+  }
+  ```
+- Explanation task → `read_file` + prose response (skip for tool-call training,
+  useful for retrieval index only)
+
+**Embedding strategy:**
+- Embed: `"{docstring} → {tool_name} solution.py"`
+- Metadata: `source: humanevalpack`, `language`, `task_type: synthesis|fix|explain`
+
+---
+
+#### Dataset 12 — `yahma/alpaca-cleaned`
+**HF:** https://hf.co/datasets/yahma/alpaca-cleaned
+**License:** CC-BY-4.0 | **Size:** ~52K | **Downloads:** 921K+
+
+**Why useful for Codey-v2:**
+The cleaned Alpaca dataset. Not code-specific, but covers a wide range of
+general task instructions including note-taking, lookup, and multi-step reasoning.
+Valuable for training the non-code tools: `note_save`, `note_forget`, and general
+`shell` commands. The cleaned version removes hallucinated web references.
+
+**Transformation:**
+- Filter to examples where `output` implies a command or file operation.
+- "Remember this", "Don't forget X" → `note_save`
+- "Run X", "Execute Y" → `shell`
+- Code outputs → `write_file`
+- Discard conversational or factual Q&A examples (no tool applies).
+
+**Embedding strategy:**
+- Embed: `"{instruction} → {tool_name} {key_arg}"`
+- Metadata: `source: alpaca-cleaned`, `category: general|code|shell|note`
+
+---
+
+#### Dataset 13 — `microsoft/orca-agentinstruct-1M-v1`
+**HF:** https://hf.co/datasets/microsoft/orca-agentinstruct-1M-v1
+**License:** CDLA-Permissive-2.0 | **Size:** ~1M | **Downloads:** 69K+
+
+**Why useful for Codey-v2:**
+Microsoft's AgentInstruct dataset covering complex multi-step agentic tasks: text
+editing, creative writing, tool use, coding, and web-interaction simulations.
+Large scale (1M examples) with high diversity. The coding and tool-use subsets map
+directly to Codey-v2. Use this as a **secondary source** — sample strategically by
+category rather than loading all 1M records.
+
+**Recommended subsets to sample:**
+- `coding` category → `write_file`, `shell`
+- `tool_use` category → all tools
+- `text_editing` category → `patch_file`, `write_file`
+
+**Transformation:** Parse multi-turn conversations; extract first user instruction
+as `"user"`, last assistant action as tool call using the same classification rules.
+
+**Embedding strategy:**
+- Sample max 20K examples from high-signal categories.
+- Embed: `"{user} → {tool_name} {key_arg}"`
+- Metadata: `source: orca-agentinstruct`, `category`
+
+---
+
+#### Dataset 14 — `m-a-p/Code-Feedback`
+**HF:** https://hf.co/datasets/m-a-p/Code-Feedback
+**License:** Apache-2.0 | **Size:** ~68K | **Downloads:** 29K+
+
+**Why useful for Codey-v2:**
+OpenCodeInterpreter dataset. Contains multi-turn coding conversations where the
+user provides an instruction, the assistant generates code, executes it, sees the
+output, and refines. This execution loop pattern (write → run → see error → patch)
+is exactly the Codey-v2 agentic loop: `write_file` → `shell` → `patch_file`.
+
+**Schema:**
+```json
+{
+  "query": "Write a function that counts vowels",
+  "answer": "def count_vowels(s):\n    ...",
+  "code_feedback": [{"input": "print(count_vowels('hello'))", "output": "2\n"}]
+}
+```
+
+**Transformation:**
+1. `query` → `"user"`.
+2. `answer` → `write_file` content.
+3. `code_feedback[0].input` → `shell` command.
+4. Produces 2-step `write_file` + `shell` record.
+5. If multi-turn, extract subsequent fix turns → `patch_file` records.
+
+**Embedding strategy:**
+- Embed: `"{query} → write_file + shell execute"`
+- Metadata: `source: code-feedback`, `has_execution_loop: bool`, `num_refinements`
+
+---
+
+#### Dataset 15 — `gorilla-llm/Berkeley-Function-Calling-Leaderboard`
+**HF:** https://hf.co/datasets/gorilla-llm/Berkeley-Function-Calling-Leaderboard
+**License:** Apache-2.0 | **Size:** ~2.5K | **Downloads:** 127K+
+
+**Why useful for Codey-v2:**
+BFCL is the canonical function-calling benchmark — used to rank LLMs on tool-use
+accuracy. Small, but the examples are human-curated and span diverse categories:
+simple calls, nested calls, parallel calls, and multi-turn. Use as a **validation
+set** to measure pipeline quality rather than as bulk training data.
+
+**Role in pipeline:** BFCL examples → held-out eval set; measure how well the
+pipeline normalizes them vs. ground truth. Not included in training JSONL.
+
+---
+
+### 14.3 Synthetic Data Strategy
+
+The biggest gap in available open datasets is **Termux / Android CLI interaction**.
+No existing public dataset covers:
+- `pkg install` / `pkg upgrade` package management
+- Termux-specific paths (`/data/data/com.termux/files/`)
+- Termux API commands (`termux-notification`, `termux-clipboard-get`)
+- Multi-step Termux dev workflows (install → configure → run)
+- Python virtual environment management on Termux
+- Git operations in Termux context
+- Command execution loops with error recovery
+
+#### 14.3.1 Synthetic Termux CLI Corpus (target: 5K examples)
+
+**Generation method:** Template-based expansion + LLM paraphrasing.
+
+**Template categories:**
+
+| Category | Example instruction | Tool call |
+|----------|-------------------|-----------|
+| Package install | "install {package} in termux" | `shell: pkg install {package}` |
+| Package upgrade | "update all termux packages" | `shell: pkg upgrade` |
+| Python packages | "install {pip_pkg} with pip" | `shell: pip install {pip_pkg}` |
+| File operations | "create a {ext} file named {name}" | `write_file: {name}.{ext}` |
+| Run scripts | "run {script}" | `shell: python {script}` |
+| Git operations | "clone {repo}" | `shell: git clone {url}` |
+| Check installed | "list installed packages" | `shell: pkg list-installed` |
+| Storage access | "list files in home directory" | `list_dir: ~` |
+| Termux API | "send a notification saying {msg}" | `shell: termux-notification --content {msg}` |
+| Multi-step setup | "set up a python project called {name}" | `shell mkdir` + `write_file` + `shell pip install` |
+
+**Paraphrase generation:** For each template, generate 5–10 natural language
+variants using pattern substitution:
+- "install X" → "get X", "set up X", "add X", "download X"
+- "create" → "make", "write", "generate", "build"
+
+**Total target:** 500 templates × 10 paraphrases = 5000 synthetic examples.
+
+#### 14.3.2 Synthetic Multi-Step Coding Corpus (target: 3K examples)
+
+**Gap:** Most datasets have single-step responses. Codey-v2's orchestrator generates
+multi-step plans (write + run + verify), but training data for this pattern is sparse.
+
+**Generation method:** Compose known single-step examples into sequences:
+
+**Pattern library:**
+```
+Pattern A: write_file → shell run
+  "create {name}.py and run it"
+
+Pattern B: write_file → write_file → shell test
+  "write {func} with tests and verify it passes"
+
+Pattern C: read_file → patch_file
+  "fix the {error} in {file}.py"
+
+Pattern D: shell install → write_file → shell run
+  "install {lib} and write a script that uses it"
+
+Pattern E: list_dir → read_file → write_file
+  "read {file} and create an updated version"
+```
+
+**Total target:** 600 patterns × 5 paraphrases = 3000 synthetic examples.
+
+#### 14.3.3 Synthetic Data Quality Controls
+
+- All synthetic shell commands must pass `validate_command_structure()` from
+  `tools/shell_tools.py` (no metacharacters).
+- All synthetic `write_file` content must be complete (not stubs or `...`).
+- De-duplicate against existing dataset records by instruction hash.
+- Manual review sample: spot-check 5% of generated records before inclusion.
+
+---
+
+### 14.4 Dataset Loading Priority and Phasing
+
+#### Phase 1 — Core (implement first, ~200K examples)
+1. `glaiveai/glaive-function-calling-v2` — primary function-call training
+2. `iamtarun/python_code_instructions_18k_alpaca` — Python write_file patterns
+3. `google-research-datasets/mbpp` — write+test+run patterns
+4. `evalplus/humanevalplus` — write+test+run patterns
+5. Synthetic Termux CLI corpus — critical gap fill
+
+#### Phase 2 — Volume (add after Phase 1 validated, ~300K more)
+6. `lockon/xlam-function-calling-60k` — chained calls
+7. `TokenBender/code_instructions_122k_alpaca_style` — multilang coverage
+8. `m-a-p/Code-Feedback` — execution loop pattern
+9. Synthetic multi-step corpus
+
+#### Phase 3 — Refinement (optional, after Phase 2)
+10. `NousResearch/hermes-function-calling-v1` — high quality filter
+11. `bigcode/bigcodebench` — complex stdlib tasks
+12. `argilla/apigen-function-calling` — additional diversity
+13. `microsoft/orca-agentinstruct-1M-v1` — sampled 20K from coding/tool subsets
+14. `bigcode/humanevalpack` — patch_file pattern (fix tasks)
+
+---
+
+### 14.5 Embedding Field Summary (all datasets)
+
+| Embed text construction | Datasets |
+|------------------------|---------|
+| `"{user} → shell {command}"` | Glaive, xLAM, APIGen, Alpaca, Termux-synthetic |
+| `"{user} → write_file {path}"` | Python-18k, Code-122k, CodeSearchNet, HumanEval+, MBPP |
+| `"{user} → write_file + shell test"` | MBPP, HumanEval+, BigCodeBench, Code-Feedback |
+| `"{user} → patch_file {path}"` | HumanEvalPack (fix), Alpaca (edit tasks) |
+| `"{user} → note_save {key}"` | Alpaca (remember tasks) |
+
+**Chunking:** One record per instruction-response pair.  Multi-step records are
+stored as one unit (the full sequence), with `num_steps` in metadata to enable
+filtering.
+
+**Metadata schema (all records):**
+```json
+{
+  "id":           "sha256_first16_of_user_text",
+  "user":         "lowercased normalized instruction",
+  "tool_calls":   [...],
+  "source":       "dataset_name",
+  "phase":        1,
+  "quality":      0.0-1.0,
+  "language":     "python|bash|javascript|null",
+  "num_steps":    1,
+  "tool_names":   ["shell"],
+  "has_test":     false,
+  "is_synthetic": false,
+  "created_at":   1743123456
+}
+```
+
+---
+
+### 14.6 License Compliance Summary
+
+| License | Datasets | Commercial use? | Restrictions |
+|---------|---------|-----------------|-------------|
+| Apache-2.0 | Glaive-v2, Hermes-v1, Python-18k, Code-122k, CodeSearchNet-Python, BigCodeBench, HumanEvalPack, BFCL | Yes | Attribution |
+| CC-BY-4.0 | MBPP, xLAM-60k, APIGen-100k | Yes | Attribution |
+| MIT | HumanEvalPack, synthetic (own) | Yes | None |
+| CC-BY-NC-4.0 | tatsu-lab/alpaca | No (non-commercial) | Non-commercial only |
+| CC-BY-4.0 | yahma/alpaca-cleaned | Yes | Attribution |
+| CDLA-2.0 | OrcaAgentInstruct | Yes | Attribution |
+
+> **Action item:** Replace `tatsu-lab/alpaca` (NC license) with `yahma/alpaca-cleaned`
+> (CC-BY-4.0) to maintain commercial-use compatibility throughout the pipeline.
+
+---
+
+*Dataset Strategy section added: 2026-03-28. 17 datasets selected, 15 active +
+2 synthetic corpora. Phase 1 target: ~200K examples. Total pipeline target: ~500K+.*

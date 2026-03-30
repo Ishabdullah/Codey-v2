@@ -10,7 +10,7 @@ import sys
 from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core.orchestrator import is_complex, CONVERSATIONAL_PATTERNS
+from core.orchestrator import is_complex, CONVERSATIONAL_PATTERNS, _postprocess_plan
 
 
 class TestOrchestrationHeuristics:
@@ -155,6 +155,127 @@ class TestConversationalPatterns:
         
         assert "help" in patterns_text.lower()
         assert "explain" in patterns_text.lower()
+
+
+class TestPostprocessPlan:
+    """Test _postprocess_plan: deduplication, Run step preservation, cap."""
+
+    def test_empty_plan(self):
+        assert _postprocess_plan([]) == []
+
+    def test_single_step_unchanged(self):
+        steps = ["Create app.py: accepts input, prints output"]
+        assert _postprocess_plan(steps) == steps
+
+    def test_deduplicates_same_file(self):
+        """Two create steps for the same file — keep the longer one."""
+        steps = [
+            "Create app.py: prints hello",
+            "Create app.py: accepts input, prints hello world with timestamp",
+        ]
+        result = _postprocess_plan(steps)
+        assert len(result) == 1
+        assert "timestamp" in result[0]
+
+    def test_run_steps_never_deduplicated(self):
+        """Two Run: steps for the same file are intentional — both kept."""
+        steps = [
+            "Create xform.py: counts tokens",
+            "Run: python xform.py corpus.txt",
+            "Run: python xform.py corpus.txt",
+        ]
+        result = _postprocess_plan(steps)
+        run_steps = [s for s in result if s.lower().startswith("run:")]
+        assert len(run_steps) == 2
+
+    def test_cap_at_eight(self):
+        """Plans with more than 8 steps are capped at 8."""
+        steps = [f"Create file{i}.py: step {i}" for i in range(12)]
+        result = _postprocess_plan(steps)
+        assert len(result) <= 8
+
+    def test_different_files_all_kept(self):
+        """Steps for different files are kept separately."""
+        steps = [
+            "Create app.py: main entry point",
+            "Create models.py: data models",
+            "Create tests.py: unit tests",
+            "Run: python -m pytest tests.py",
+        ]
+        result = _postprocess_plan(steps)
+        assert len(result) == 4
+
+    def test_verify_step_kept(self):
+        """Verify/check steps (no filename) are kept as-is."""
+        steps = [
+            "Create app.py: core logic",
+            "Run: python app.py",
+            "Verify: output matches expected format",
+        ]
+        result = _postprocess_plan(steps)
+        assert len(result) == 3
+        assert any("Verify" in s for s in result)
+
+    def test_run_step_with_different_args_both_kept(self):
+        """Run steps with different arguments are distinct and both kept."""
+        steps = [
+            "Create counter.py: counts words",
+            "Run: python counter.py file1.txt",
+            "Run: python counter.py file2.txt",
+        ]
+        result = _postprocess_plan(steps)
+        run_steps = [s for s in result if s.lower().startswith("run:")]
+        assert len(run_steps) == 2
+
+
+class TestIntegrationAgentUtils:
+    """
+    Lightweight integration test for agent utilities.
+
+    Does NOT require a running inference server — tests pure logic
+    (JSON parsing, tool call parsing, hallucination detection) only.
+    """
+
+    def test_extract_json_roundtrip(self):
+        from core.agent import extract_json
+        data = {"name": "write_file", "args": {"path": "x.py", "content": "pass\n"}}
+        import json
+        raw = json.dumps(data)
+        result = extract_json(raw)
+        assert result == data
+
+    def test_parse_tool_call_roundtrip(self):
+        from core.agent import parse_tool_call
+        raw = '<tool>\n{"name": "shell", "args": {"command": "pytest test.py -v"}}\n</tool>'
+        result = parse_tool_call(raw)
+        assert result is not None
+        assert result["name"] == "shell"
+        assert result["args"]["command"] == "pytest test.py -v"
+
+    def test_hallucination_no_false_positive_for_tool_use(self):
+        from core.agent import is_hallucination
+        response = "I created the file for you."
+        user_message = "Create hello.py"
+        tools_used = ["write_file:{\"path\":\"hello.py\"}"]  # tool was used
+        false_file, false_run = is_hallucination(response, user_message, tools_used)
+        assert false_file == False  # tool was used, so not a hallucination
+
+    def test_hallucination_detects_no_tool_used(self):
+        from core.agent import is_hallucination
+        # is_hallucination fires on exact phrases OR on code-in-markdown without tool
+        response = "I created the file for you."  # matches "i created" phrase
+        user_message = "Create hello.py"
+        tools_used = []  # no tool used
+        false_file, false_run = is_hallucination(response, user_message, tools_used)
+        assert false_file == True
+
+    def test_hallucination_detects_code_block_without_write(self):
+        from core.agent import is_hallucination
+        response = "Here is the code:\n```python\nprint('hello')\n```"
+        user_message = "Create hello.py"
+        tools_used = []  # no write_file used
+        false_file, _ = is_hallucination(response, user_message, tools_used)
+        assert false_file == True
 
 
 if __name__ == "__main__":

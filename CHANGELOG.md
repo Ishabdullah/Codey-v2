@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.7.1] - 2026-03-29
+
+### Fixed — Peer CLI Delegation + Shell Safety
+
+#### Peer CLI Delegation Pipeline
+
+- **"Ask Claude" bypassed plannd** (`main.py`): Added peer directive regex gate before `_try_daemon_plan()`. If the user prompt matches `\b(ask|call|have|tell|use|get|let)\s+(claude|gemini|qwen)\b`, the request skips plannd and goes directly to `run_agent()` so `_detect_peer_delegation` fires on the original message.
+
+- **Wrong task sent to peer** (`core/agent.py`): Removed the `for _hm in reversed(history)` loop that scanned old history messages to override `_orig_goal`. The current `user_message` is now always used as-is, preventing stale tasks from resumed sessions from being forwarded to Claude instead of the actual request.
+
+- **Claude asked for permission instead of writing code** (`core/agent.py`, `core/peer_cli.py`): Added `_FORMAT_INSTRUCTIONS` constant injected into every peer delegation prompt (both direct and escalation paths). Instructs the peer: "You are responding to an automated system. Do NOT ask for permission. Do NOT ask clarifying questions. Act immediately." Includes exact `**\`filename.py\`**` + triple-backtick output format that `_auto_apply_peer_code` parses.
+
+- **Peer prompt now includes project files** (`core/agent.py`): When files exist in the working context, the delegated prompt now includes their current content so the peer CLI can read and reason about the codebase before writing code.
+
+- **`_auto_apply_peer_code` fallback** (`core/agent.py`): Added secondary pattern matching for bare triple-backtick blocks (no filename header) — infers filename from the original task context when the peer omits the `**\`filename\`**` header line.
+
+- **Duplicate `Run:` steps merged incorrectly** (`core/orchestrator.py`): `_postprocess_plan` now skips the file-merge deduplication logic for steps that start with `Run` — they are appended as-is so tests and scripts can be run multiple times.
+
+- **Planner invented capabilities** (`core/plannd.py`): Added Rule 7 to PLANNER_PROMPT: "Never invent capabilities. Step descriptions must only reflect what the user explicitly described. Do not assume function arguments, test input values, or script features not mentioned in the user's request."
+
+- **Malformed tool JSON silently dropped** (`core/agent.py`): After `parse_tool_call` returns None, if `<tool>` is present in the response, an explicit retry is triggered with a corrective message rather than falling through to the no-tool path.
+
+- **Wrong retry context** (`main.py`): Retry steps now include the filename that failed, the previous result, and an explicit instruction to use `write_file` — preventing the agent from re-running a different or unrelated step on retry.
+
+- **No-text-before-tool rule** (`prompts/system_prompt.py`): Strengthened from "Respond with exactly one tool call" to "NO TEXT BEFORE THE TOOL CALL — not even one word."
+
+- **Step scope leakage** (`prompts/system_prompt.py`): Added rule "Current step is your ONLY scope. Never create or modify files not required by the Current step."
+
+- **`2>&1` in follow-up pytest command** (`core/agent.py`): Removed `2>&1` from the auto-generated test follow-up shell command.
+
+- **`max_steps` too low** (`utils/config.py`): Raised from `6` → `10` to accommodate multi-file tasks without hitting the step cap prematurely.
+
+#### Shell Safety Model
+
+- **Removed shell metacharacter blocklist** (`tools/shell_tools.py`): Deleted `SHELL_METACHARACTERS`, `validate_command_structure()`, and the hard `[ERROR] Command blocked` return. All commands — including those with `&&`, `|`, `;`, `2>&1` — now flow through the user confirmation prompt instead of being rejected outright.
+
+- **Confirmation is universal**: Every command goes through `is_dangerous()` (explicit warning for `rm`, `curl`, `wget`, etc.) then `confirm_shell` (user approval prompt). YOLO mode bypasses both checks.
+
+### Changed
+
+- `utils/config.py` — `max_steps`: `6` → `10`
+- Shell model: metacharacter blocklist → consent-based (confirm all, warn on dangerous)
+
+---
+
 ## [v2.7.0] - 2026-03-25
 
 ### Added — Three-Model Architecture + DeepSeek Planner Daemon
@@ -639,6 +684,7 @@ The following features are explicitly out of scope for v2.0.0 but may be conside
 
 | Version | Python | Termux | llama.cpp | Models |
 |---------|--------|--------|-----------|--------|
+| 2.7.1 | 3.12+ | Latest | Latest stable | Qwen2.5-Coder-7B + DeepSeek-R1-1.5B + nomic-embed |
 | 2.7.0 | 3.12+ | Latest | Latest stable | Qwen2.5-Coder-7B + DeepSeek-R1-1.5B + nomic-embed |
 | 2.6.9 | 3.12+ | Latest | Latest stable | Qwen2.5-Coder-7B |
 | 2.0.0 | 3.12+ | Latest | Latest stable | Qwen2.5-7B, Qwen2.5-1.5B |

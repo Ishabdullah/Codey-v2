@@ -463,15 +463,20 @@ class Daemon:
         # _process_planner_tasks, which uses try_claim_task() for atomic claiming.
 
         # Pre-load 7B model (llama-server on port 8080) so it's ready for CLI
-        try:
-            from core.loader_v2 import get_loader
-            loader = get_loader()
-            if loader.ensure_model():
-                info("7B model pre-loaded (port 8080)")
-            else:
-                warning("7B model pre-load failed — will load on first request")
-        except Exception as _e:
-            warning(f"7B model pre-load skipped: {_e}")
+        # Skip when using a remote backend — no local server needed
+        from utils.config import CODEY_BACKEND as _backend, is_remote_backend as _is_remote
+        if not _is_remote():
+            try:
+                from core.loader_v2 import get_loader
+                loader = get_loader()
+                if loader.ensure_model():
+                    info("7B model pre-loaded (port 8080)")
+                else:
+                    warning("7B model pre-load failed — will load on first request")
+            except Exception as _e:
+                warning(f"7B model pre-load skipped: {_e}")
+        else:
+            info(f"Backend: {_backend} — skipping local 7B and 0.5B server startup")
 
         # Start dedicated embedding server (nomic-embed on port 8082)
         try:
@@ -504,15 +509,16 @@ class Daemon:
                 _watchdog_ticks += 1
                 if _watchdog_ticks >= 60:
                     _watchdog_ticks = 0
-                    # 7B model server watchdog
-                    try:
-                        from core.loader_v2 import get_loader
-                        _loader = get_loader()
-                        if not _loader.get_loaded_model():
-                            warning("7B model server died — restarting...")
-                            _loader.load_primary()
-                    except Exception:
-                        pass
+                    # 7B model server watchdog (local only)
+                    if not _is_remote():
+                        try:
+                            from core.loader_v2 import get_loader
+                            _loader = get_loader()
+                            if not _loader.get_loaded_model():
+                                warning("7B model server died — restarting...")
+                                _loader.load_primary()
+                        except Exception:
+                            pass
                     # Embed server watchdog
                     try:
                         from core.embed_server import get_embed_server

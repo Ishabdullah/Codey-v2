@@ -3,46 +3,18 @@ from pathlib import Path
 from utils.logger import warning, confirm as ask_confirm, error
 from utils.config import AGENT_CONFIG
 
-# Commands that always require confirmation unless in YOLO mode
+# Commands that always require an explicit warning + confirmation
 DANGEROUS_COMMANDS = [
     "rm", "rmdir", "mkfs", "dd", "chmod", "wget", "curl", "mv", "cp",
 ]
-
-# Shell metacharacters that enable sub-shell injection
-SHELL_METACHARACTERS = [';', '&&', '||', '|', '`', '$(', '${', '<(', '>(', '\n', '\r']
-
-def validate_command_structure(command: str) -> tuple[bool, str]:
-    """
-    Validate command structure to prevent sub-shell injection.
-    
-    Checks for dangerous shell metacharacters that could enable:
-    - Command chaining (;, &&, ||)
-    - Piping to other commands (|)
-    - Command substitution (``, $(), ${})
-    - Process substitution (<(), >())
-    
-    Args:
-        command: The shell command to validate
-        
-    Returns:
-        Tuple of (is_valid, error_message)
-        If valid: (True, "")
-        If invalid: (False, "description of blocked pattern")
-    """
-    for char in SHELL_METACHARACTERS:
-        if char in command:
-            return False, f"Shell metacharacter '{char}' not allowed (prevents injection)"
-    return True, ""
 
 def is_dangerous(command: str) -> bool:
     cmd_parts = command.split()
     if not cmd_parts:
         return False
-    # Check if the primary command is in our list
     base_cmd = Path(cmd_parts[0]).name
     if base_cmd in DANGEROUS_COMMANDS:
         return True
-    # Still check for dangerous patterns like pipe to sh
     cmd_lower = command.lower()
     dangerous_patterns = ["sudo ", "> /dev/", "| sh", "| bash", ":(){:|:&};:"]
     return any(p in cmd_lower for p in dangerous_patterns)
@@ -50,22 +22,20 @@ def is_dangerous(command: str) -> bool:
 def shell(command: str, yolo: bool = False, timeout: int = 1800) -> str:
     """
     Execute a shell command. Returns combined stdout + stderr.
-    Prompts for confirmation on dangerous or any command if confirm_shell=True.
+
+    All commands go through the user confirmation path when confirm_shell=True
+    (the default). Metacharacter commands (&&, |, ;, etc.) are allowed — the
+    user sees the full command before approving.  Dangerous destructive commands
+    (rm, curl, etc.) receive an explicit warning before the confirmation prompt.
 
     Args:
         command: The shell command to execute
         yolo: Skip confirmation prompts
-        timeout: Command timeout in seconds (default: 30 minutes for long-running tasks)
+        timeout: Command timeout in seconds (default: 30 minutes)
 
     Returns:
         Command output or error message
     """
-    # Validate command structure (prevent sub-shell injection) — always enforced
-    is_valid, error_msg = validate_command_structure(command)
-    if not is_valid:
-        error(f"Blocked unsafe command: `{command}`")
-        return f"[ERROR] Command blocked: {error_msg}"
-    
     should_confirm = False
 
     if is_dangerous(command):
