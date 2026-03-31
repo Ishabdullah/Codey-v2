@@ -120,8 +120,8 @@ RETRIEVAL_CONFIG = {
                                         # the KB has no specifically relevant material)
 }
 
-CODEY_VERSION = "2.7.2"
-CODEY_NAME    = "Codey-v2"
+CODEY_VERSION = "2.0.0"
+CODEY_NAME    = "CODEY-V2"
 
 # ── OpenRouter backend (optional) ────────────────────────────────────────────
 # ── Remote backend selection ─────────────────────────────────────────────────

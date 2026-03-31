@@ -12,14 +12,14 @@ from core.agent import run_agent
 from core import context as ctx
 from core.sysmon import get_monitor
 
-BANNER = f"""[bold green]
+BANNER = f"""[bold blue]
   ██████╗ ██████╗ ██████╗ ███████╗██╗   ██╗
  ██╔════╝██╔═══██╗██╔══██╗██╔════╝╚██╗ ██╔╝
  ██║     ██║   ██║██║  ██║█████╗   ╚████╔╝
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
-  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝
-[/bold green][dim]  v{CODEY_VERSION} · Local AI Coding Assistant · Termux[/dim]
+  ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝  ─ V2
+[/bold blue][dim]  v{CODEY_VERSION} · Local AI Coding Assistant · Termux[/dim]
 """
 
 def parse_args():
@@ -133,41 +133,11 @@ def run_init():
     success(f"CODEY.md written to {path}") if not path.startswith("[ERROR]") else error(path)
 
 def _try_daemon_plan(prompt: str, no_plan: bool = False):
-    """
-    Send the prompt to the daemon (Unix socket) so the 0.5B model can produce
-    a numbered plan.  Returns step list on success, None on any failure.
-    """
+    """Thin shim — delegates to core.planner_service.get_plan."""
+    from core.planner_service import _request_daemon_plan
     if no_plan:
         return None
-    try:
-        from core.daemon import is_daemon_running, send_command
-        if not is_daemon_running():
-            return None
-        try:
-            from utils.config import is_remote_planner_backend, CODEY_PLANNER_BACKEND
-            from utils.config import OPENROUTER_PLANNER_MODEL, UNLIMITEDCLAUDE_PLANNER_MODEL
-            if is_remote_planner_backend():
-                pm = UNLIMITEDCLAUDE_PLANNER_MODEL if CODEY_PLANNER_BACKEND == "unlimitedclaude" else OPENROUTER_PLANNER_MODEL
-                info(f"Requesting plan from {CODEY_PLANNER_BACKEND} planner ({pm})...")
-            else:
-                info("Requesting plan from 0.5B planner...")
-        except Exception:
-            info("Requesting plan from planner...")
-        response = send_command(
-            "command",
-            {"prompt": prompt, "no_plan": False, "plan_only": True},
-            timeout=185,  # slightly over daemon's 180s wait_for
-        )
-        plan = response.get("plan")
-        if plan and isinstance(plan, list) and len(plan) > 1:
-            return plan
-        if not plan:
-            info("Planner returned no steps — running directly")
-        elif len(plan) == 1:
-            info("Planner returned 1 step — running directly")
-    except Exception as _e:
-        info(f"Planner unavailable ({type(_e).__name__}) — running directly")
-    return None
+    return _request_daemon_plan(prompt)
 
 
 def _extract_filename_from_step(step: str) -> str:
@@ -259,7 +229,12 @@ def _run_with_plan(prompt: str, history: list, yolo: bool, use_plan: bool, no_pl
         response = ""
         for i, step in enumerate(plan, 1):
             console.print(f"\n[dim]── Step {i}/{len(plan)}: {step}[/dim]")
-            step_resp, history = run_agent(step, history, yolo=yolo, no_plan=True,
+            # Prepend the original user goal so the agent can resolve any
+            # filename/path discrepancies introduced by the planner (e.g.
+            # planner abbreviates "fibonacci.py" → "fib.py"; agent sees the
+            # overall goal and uses the correct name per the system prompt rule).
+            step_with_goal = f"Overall goal: {prompt}\n\nCurrent step: {step}"
+            step_resp, history = run_agent(step_with_goal, history, yolo=yolo, no_plan=True,
                                            _plan_rag_block=_plan_rag)
             response = step_resp or response
 
@@ -268,23 +243,45 @@ def _run_with_plan(prompt: str, history: list, yolo: bool, use_plan: bool, no_pl
             step_low = step.lower()
             if any(k in step_low for k in _CREATE_KEYWORDS):
                 fname = _extract_filename_from_step(step)
+                # Also try extracting the filename from the original user prompt
+                # in case the planner abbreviated it (e.g. fib.py vs fibonacci.py).
+                fname_goal = _extract_filename_from_step(prompt)
+                # Use the goal filename when it shares a stem with the plan filename
+                # (e.g. "fib" is a prefix of "fibonacci") — the goal is authoritative.
+                if fname_goal and fname and fname != fname_goal:
+                    plan_stem = Path(fname).stem.lower()
+                    goal_stem = Path(fname_goal).stem.lower()
+                    if goal_stem.startswith(plan_stem) or plan_stem.startswith(goal_stem):
+                        fname = fname_goal
                 if fname:
                     target = Path(os.getcwd()) / fname
                     if not target.exists():
-                        warning(f"Step {i}: '{fname}' not found after step — retrying")
-                        console.print(f"\n[dim]↺  Step {i}/{len(plan)} retry (file not created)[/dim]")
-                        # Pass context about what failed so the agent knows to address
-                        # root cause (e.g. it modified the wrong file) rather than just
-                        # repeating the same action.
-                        _prev_summary = (step_resp or "")[:300]
-                        _retry_prefix = (
-                            f"RETRY: The previous attempt did not create '{fname}'. "
-                            f"Previous result: {_prev_summary}. "
-                            f"You MUST create '{fname}' using write_file. "
-                            "Do not patch or modify any other files.\n\n"
-                        )
+                        # Check if the file was placed in a subdirectory instead
+                        found_elsewhere = list(Path(os.getcwd()).rglob(fname))
+                        if found_elsewhere:
+                            wrong_path = found_elsewhere[0]
+                            rel = wrong_path.relative_to(os.getcwd())
+                            warning(f"Step {i}: '{fname}' created at '{rel}' instead of cwd — retrying")
+                            console.print(f"\n[dim]↺  Step {i}/{len(plan)} retry (wrong path)[/dim]")
+                            _retry_prefix = (
+                                f"RETRY: '{fname}' was written to '{rel}' instead of the "
+                                f"current working directory. "
+                                f"Run: shell mv \"{rel}\" \"{fname}\" to move it, OR "
+                                f"delete '{rel}' and re-create '{fname}' directly in cwd. "
+                                "Do NOT create or use subdirectories.\n\n"
+                            )
+                        else:
+                            warning(f"Step {i}: '{fname}' not found after step — retrying")
+                            console.print(f"\n[dim]↺  Step {i}/{len(plan)} retry (file not created)[/dim]")
+                            _prev_summary = (step_resp or "")[:300]
+                            _retry_prefix = (
+                                f"RETRY: The previous attempt did not create '{fname}'. "
+                                f"Previous result: {_prev_summary}. "
+                                f"You MUST create '{fname}' in the current working directory "
+                                "using write_file. Do not create subdirectories.\n\n"
+                            )
                         step_resp, history = run_agent(
-                            _retry_prefix + step, history, yolo=yolo, no_plan=True,
+                            _retry_prefix + step_with_goal, history, yolo=yolo, no_plan=True,
                             _plan_rag_block=_plan_rag,
                         )
                         response = step_resp or response
@@ -592,7 +589,7 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
         return True, history
 
     if low == "/context":
-        from core.memory import memory as _mem
+        from core.memory_v2 import memory as _mem
         s = _mem.status()
         loaded = s['file_names']
         if loaded:
@@ -631,7 +628,7 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
         return True, history
 
     if low.startswith("/memory-status"):
-        from core.memory import memory as _mem
+        from core.memory_v2 import memory as _mem
         from core.tokens import estimate_tokens, usage_bar
         s = _mem.status()
         console.print(f"[bold]Memory status — turn {s['turn']}:[/bold]")
@@ -642,7 +639,7 @@ def handle_command(user_input: str, history: list, yolo: bool = False) -> tuple[
         return True, history
 
     if low.startswith("/memory-v2"):
-        from core.memory import memory as _mem
+        from core.memory_v2 import memory as _mem
         s = _mem.status()
         console.print("[bold]Four-Tier Memory Status:[/bold]")
         console.print()
