@@ -20,6 +20,8 @@ A persistent, daemon-based AI coding agent that runs entirely on your Android de
 
 ## Quick Start
 
+### Local (on-device models)
+
 ```bash
 ./install.sh          # Install everything (models, llama.cpp, PATH)
 codeyd2 start         # Start all three model servers and the daemon
@@ -28,6 +30,42 @@ codeyd2 status        # Check daemon health at any time
 ```
 
 See [docs/installation.md](docs/installation.md) for manual setup and model download links.
+
+### OpenRouter (cloud inference — no local models required)
+
+CODEY-V2 supports [OpenRouter](https://openrouter.ai) as a drop-in backend. No llama.cpp, no GGUF files, no daemon needed.
+
+**1. Get an API key** from [openrouter.ai/keys](https://openrouter.ai/keys).
+
+**2. Set your environment variables:**
+
+```bash
+export OPENROUTER_API_KEY="sk-or-your-key-here"
+export CODEY_BACKEND="openrouter"
+```
+
+To make these permanent, add both lines to your `~/.bashrc` or `~/.zshrc` and run `source ~/.bashrc`.
+
+**3. Install dependencies and run:**
+
+```bash
+pip install -r requirements.txt
+python main.py "your task here"
+```
+
+That's all. By default CODEY-V2 will use `qwen/qwen-2.5-coder-7b-instruct` for both coding and planning. You can override either model:
+
+```bash
+export OPENROUTER_MODEL="anthropic/claude-sonnet-4-5"          # coding model
+export OPENROUTER_PLANNER_MODEL="meta-llama/llama-3.2-1b-instruct:free"  # planning model
+```
+
+Any model slug from [openrouter.ai/models](https://openrouter.ai/models) is valid. You can also mix backends — for example, run the planner locally while routing coding calls to OpenRouter:
+
+```bash
+export CODEY_BACKEND="openrouter"    # coding → OpenRouter
+export CODEY_BACKEND_P="local"       # planner → local 0.5B (port 8081)
+```
 
 ---
 
