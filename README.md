@@ -10,6 +10,14 @@
   v2.0.0 · Local AI Coding Assistant · Termux
 ```
 
+> **Codey-v2: A persistent, fully local AI coding agent that runs in Termux on your Android phone — with daemon mode, RAG, git tools, voice, and self-refinement. No cloud required.**
+
+[![Stars](https://img.shields.io/github/stars/Ishabdullah/Codey-v2?style=flat-square&color=gold)](https://github.com/Ishabdullah/Codey-v2/stargazers)
+[![License](https://img.shields.io/github/license/Ishabdullah/Codey-v2?style=flat-square)](LICENSE)
+[![Last Commit](https://img.shields.io/github/last-commit/Ishabdullah/Codey-v2?style=flat-square)](https://github.com/Ishabdullah/Codey-v2/commits/main)
+[![Python](https://img.shields.io/badge/python-3.12%2B-blue?style=flat-square&logo=python)](https://python.org)
+[![llama.cpp](https://img.shields.io/badge/inference-llama.cpp-green?style=flat-square)](https://github.com/ggerganov/llama.cpp)
+
 ![Codey Mascot](assets/codey-mascot.png)
 
 A persistent, daemon-based AI coding agent that runs entirely on your Android device. CODEY-V2 maintains state across sessions, manages a background task queue, and uses three purpose-built models — a 7B primary agent, a 0.5B planner and summarizer, and a dedicated embedding encoder — all served locally via llama.cpp.
@@ -20,52 +28,70 @@ A persistent, daemon-based AI coding agent that runs entirely on your Android de
 
 ## Quick Start
 
-### Local (on-device models)
+### Local — on-device models (5 steps)
 
 ```bash
-./install.sh          # Install everything (models, llama.cpp, PATH)
-codeyd2 start         # Start all three model servers and the daemon
-codey2 "your task"    # Send a task
-codeyd2 status        # Check daemon health at any time
+# 1. Clone and enter the repo
+git clone https://github.com/Ishabdullah/Codey-v2.git && cd Codey-v2
+
+# 2. Run the installer (downloads models, builds llama.cpp, sets PATH)
+./install.sh
+
+# 3. Start all three model servers and the background daemon
+codeyd2 start
+
+# 4. Send your first task
+codey2 "add a docstring to every function in utils.py"
+
+# 5. Check daemon health at any time
+codeyd2 status
 ```
 
 See [docs/installation.md](docs/installation.md) for manual setup and model download links.
 
-### OpenRouter (cloud inference — no local models required)
+---
 
-CODEY-V2 supports [OpenRouter](https://openrouter.ai) as a drop-in backend. No llama.cpp, no GGUF files, no daemon needed.
-
-**1. Get an API key** from [openrouter.ai/keys](https://openrouter.ai/keys).
-
-**2. Set your environment variables:**
+### OpenRouter — cloud inference, no local models (5 steps)
 
 ```bash
-export OPENROUTER_API_KEY="sk-or-your-key-here"
-export CODEY_BACKEND="openrouter"
-```
-
-To make these permanent, add both lines to your `~/.bashrc` or `~/.zshrc` and run `source ~/.bashrc`.
-
-**3. Install dependencies and run:**
-
-```bash
+# 1. Clone and install Python dependencies
+git clone https://github.com/Ishabdullah/Codey-v2.git && cd Codey-v2
 pip install -r requirements.txt
-python main.py "your task here"
+
+# 2. Set your API key (get one at https://openrouter.ai/keys)
+export OPENROUTER_API_KEY="sk-or-your-key-here"
+
+# 3. Switch to the OpenRouter backend
+export CODEY_BACKEND="openrouter"
+
+# 4. (Optional) Choose a model — default is qwen/qwen-2.5-coder-7b-instruct
+export OPENROUTER_MODEL="anthropic/claude-sonnet-4-5"
+
+# 5. Run a task
+python main.py "refactor my sort function to use timsort"
 ```
 
-That's all. By default CODEY-V2 will use `qwen/qwen-2.5-coder-7b-instruct` for both coding and planning. You can override either model:
+To make env vars permanent, add them to `~/.bashrc` and run `source ~/.bashrc`.
 
-```bash
-export OPENROUTER_MODEL="anthropic/claude-sonnet-4-5"          # coding model
-export OPENROUTER_PLANNER_MODEL="meta-llama/llama-3.2-1b-instruct:free"  # planning model
-```
-
-Any model slug from [openrouter.ai/models](https://openrouter.ai/models) is valid. You can also mix backends — for example, run the planner locally while routing coding calls to OpenRouter:
+Any model slug from [openrouter.ai/models](https://openrouter.ai/models) works. You can also mix backends — run the planner locally while routing coding calls to OpenRouter:
 
 ```bash
 export CODEY_BACKEND="openrouter"    # coding → OpenRouter
 export CODEY_BACKEND_P="local"       # planner → local 0.5B (port 8081)
 ```
+
+---
+
+## Visuals
+
+> **Screenshots and demo GIFs coming soon.**
+> To contribute a screen recording of Codey in action, open a PR and drop your asset in `assets/` — it is hugely appreciated and helps other Android developers discover this project.
+
+<!-- Suggested assets:
+  assets/demo-task.gif  — a short GIF of `codey2 "add a function to sort this list"` running end-to-end
+  assets/screenshot-cli.png  — terminal output showing the blue banner, tool calls, and result
+  assets/screenshot-daemon.png  — `codeyd2 status` output
+-->
 
 ---
 
@@ -161,3 +187,7 @@ Bug reports, security disclosures, and hardening contributions are especially we
 ---
 
 MIT License
+
+---
+
+*If Codey helps you code on the go, consider starring ⭐ the repo — it helps other Android developers find this project!*
