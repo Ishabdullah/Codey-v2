@@ -84,14 +84,11 @@ export CODEY_BACKEND_P="local"       # planner → local 0.5B (port 8081)
 
 ## Visuals
 
-> **Screenshots and demo GIFs coming soon.**
-> To contribute a screen recording of Codey in action, open a PR and drop your asset in `assets/` — it is hugely appreciated and helps other Android developers discover this project.
+### Fibonacci Demo — Codey-v2 in Action
 
-<!-- Suggested assets:
-  assets/demo-task.gif  — a short GIF of `codey2 "add a function to sort this list"` running end-to-end
-  assets/screenshot-cli.png  — terminal output showing the blue banner, tool calls, and result
-  assets/screenshot-daemon.png  — `codeyd2 status` output
--->
+![Codey-v2 Fibonacci Demo](assets/demo-fibonacci.gif)
+
+> Codey-v2 generating a Fibonacci sequence implementation entirely on-device — no cloud, no internet, running in Termux on Android.
 
 ---
 
