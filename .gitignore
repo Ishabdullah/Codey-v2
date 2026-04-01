@@ -48,6 +48,8 @@ model/
 *.ipynb
 codey-finetune*/
 codey-lora*/
+pipeline_output/retrieval/metadata.db
+pipeline_output/pipeline_stats.json
 
 # ── Codey-v2: dev artifacts ───────────────────────────────────────────────────
 backups/

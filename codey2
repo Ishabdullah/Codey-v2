@@ -394,6 +394,26 @@ if [ "$BG_MODE" = "true" ]; then
     done
     send_to_daemon "${PROMPT_PARTS[*]}" "$YOLO"
 else
+    # ── Start GUI server if not already running ────────────────────────────
+    GUI_PORT="${CODEY_GUI_PORT:-8888}"
+    GUI_PID_FILE="$DAEMON_DIR/gui-server.pid"
+    GUI_STARTED_HERE="false"
+
+    if [ -f "$GUI_PID_FILE" ] && kill -0 "$(cat "$GUI_PID_FILE" 2>/dev/null)" 2>/dev/null; then
+        echo "  GUI  →  http://localhost:${GUI_PORT}  (already running)"
+    elif [ -f "$CODEY_V2_DIR/gui/server.py" ]; then
+        export PYTHONUNBUFFERED=1
+        export CODEY_GUI_PORT="$GUI_PORT"
+        python3 "$CODEY_V2_DIR/gui/server.py" &
+        echo $! > "$GUI_PID_FILE"
+        GUI_STARTED_HERE="true"
+        echo "  GUI  →  http://localhost:${GUI_PORT}"
+    fi
+
+    # Kill GUI server on exit only if we started it this session
+    [ "$GUI_STARTED_HERE" = "true" ] && \
+        trap 'kill "$(cat "$GUI_PID_FILE" 2>/dev/null)" 2>/dev/null; rm -f "$GUI_PID_FILE"' EXIT INT TERM
+
     # Direct mode: always spawn Python interactively (foreground, streamed output).
     # Daemon running or not — interactive prompts never go to the socket.
     TMPSCRIPT="$(mktemp "$DAEMON_DIR/run_XXXX.py")"

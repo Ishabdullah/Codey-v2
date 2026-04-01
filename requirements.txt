@@ -1,9 +1,20 @@
-rich==14.3.3
-pytest==9.0.2
+# ── Core (required for agent, GUI, and daemon) ─────────────────────────────
+# install.sh installs these automatically.
+# On Termux, run first:  pkg install python-pyarrow python-pandas
+rich>=14.0.0
+numpy>=1.24.0
+watchdog>=3.0.0
+aiohttp>=3.9.0          # GUI server + HTTP inference calls
+requests>=2.31.0
+httpx>=0.27.0
+pyyaml>=6.0
+filelock>=3.13.0
+tqdm>=4.65.0
+hnswlib>=0.7.0          # vector search (falls back to numpy if missing)
+pytest>=9.0.0           # optional: run tests with  pytest tests/
 
-# Core LLM inference
-# Note: llama-cpp-python is optional - we use llama-server binary instead
-# llama-cpp-python>=0.2.50
+# LLM inference — we use the llama-server binary, not the Python binding
+# llama-cpp-python>=0.2.50  # uncomment only if you need the Python API directly
 
 # Phase 4: Hierarchical Memory
 # sentence-transformers>=2.2.0  # Requires torch - not available on Termux/Android

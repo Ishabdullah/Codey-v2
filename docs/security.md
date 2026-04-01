@@ -66,7 +66,10 @@ Hierarchical memory stored in SQLite (`~/.codey-v2/`).
 - No unsolicited network calls. Exception: peer CLI escalation (Claude Code, Gemini CLI, Qwen CLI) can send local file contents to external LLMs when triggered — requires explicit user confirmation before any files are shared (see [Peer CLI Escalation](../README.md#peer-cli-escalation)).
 - Encryption is not yet implemented (planned).
 
-**Recommendation:** Avoid feeding sensitive information (API keys, passwords) to the agent. Periodically review or clear state with `codey2 memory clear`.
+**Recommendation:** Avoid feeding sensitive information (API keys, passwords) to the agent. Periodically review or clear state:
+- **In-chat:** type `/clear` to wipe history, context, undo history, and saved session
+- **CLI flag:** `codey2 --clear-session` to clear the saved session before starting
+- **Manual:** `rm -f ~/.codey_sessions/*.json` to delete all saved sessions
 
 ---
 
