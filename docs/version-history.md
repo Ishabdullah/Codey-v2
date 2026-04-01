@@ -1,5 +1,18 @@
 # Version History
 
+## v2.0.0 — Initial Public Release (2026-04-01)
+
+The full feature set of Codey-v2 — three-model architecture, four-tier memory,
+multi-peer escalation, shell consent model, design-only planning phase, hybrid
+RAG retrieval, thermal management, voice, fine-tuning pipeline, and security
+hardening. See [CHANGELOG.md](../CHANGELOG.md) for the complete feature list.
+
+---
+
+## Pre-release Development Notes
+
+> The following entries document significant internal milestones during development.
+
 ## v2.7.0 — Context Management Rewrite
 
 - **Smarter context compression**: Trigger moved from 75% → 55% of context window; drop target is 40%, giving real headroom for long sessions.

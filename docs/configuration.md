@@ -136,7 +136,7 @@ Key agent behavior settings in `utils/config.py`:
 
 ```python
 AGENT_CONFIG = {
-    "max_steps":     10,    # Max tool-call steps per task (raised from 6 in v2.7.1)
+    "max_steps":     10,    # Max tool-call steps per task
     "confirm_shell": True,  # Prompt user before every shell command
     "yolo":          False, # Skip all confirmation prompts
 }

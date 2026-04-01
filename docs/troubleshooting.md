@@ -95,7 +95,7 @@ codey2   # then type /peer
 
 | Limitation | Impact | Status |
 |------------|--------|--------|
-| HTTP API overhead | ~400–600 ms per inference call | Simplified in v2.6.0 to a single reliable backend |
+| HTTP API overhead | ~400–600 ms per inference call | Single reliable HTTP backend; direct socket path not available on Android |
 | CPU-only inference | ~7–8 t/s at 4 threads on S24 Ultra | Thermal management prevents sustained throttling |
 | No NPU / GPU acceleration | Cannot offload to device accelerator | `n_gpu_layers=0` — CPU path only on Android |
 | `watchdog` optional | Background file monitoring disabled without it | `pip install watchdog` to enable |

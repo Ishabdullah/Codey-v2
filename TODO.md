@@ -1,11 +1,11 @@
 # Codey-v2 — TODO & Status
 
-**Last updated:** 2026-03-29
-**Current version:** v2.7.2
+**Last updated:** 2026-04-01
+**Current version:** v2.0.0
 
 ---
 
-## Multi-Peer Pipeline — Status (v2.7.2)
+## Multi-Peer Pipeline — Status (v2.0.0)
 
 ### ✅ Implemented and deterministically correct
 

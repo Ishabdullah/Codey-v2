@@ -7,6 +7,64 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.0.0] - 2026-04-01
+
+### Initial Public Release
+
+This is the first public release of Codey-v2. All features described below are
+present in the `v2.0.0` tag. The internal development history that led here is
+preserved in the [Pre-release Development History](#pre-release-development-history)
+section below.
+
+#### Three-Model Architecture
+- **Qwen2.5-Coder-7B-Instruct Q4_K_M** on port 8080 — primary agent (coding, reasoning, tool use)
+- **Qwen2.5-0.5B-Instruct Q8_0** on port 8081 — task planning and conversation summarization (plannd daemon)
+- **nomic-embed-text-v1.5 Q4** on port 8082 — RAG retrieval encoder
+- All three run as independent `llama-server` processes, started and watchdog-monitored by `codeyd2`
+
+#### Persistent Daemon
+- `codeyd2 start|stop|status|restart|reload|config` — full lifecycle management
+- Unix socket at `~/.codey-v2/codey-v2.sock` for low-latency IPC
+- SQLite state store — task queue and session state survive restarts
+- Watchdog auto-restarts any of the three model servers if they crash
+
+#### Four-Tier Memory System (`core/memory_v2.py`)
+- **Working memory** — LRU cache of currently-relevant file contents; evicted after task
+- **Project memory** — `CODEY.md` + key files pinned at boot; never evicted
+- **Long-term memory** — optional semantic search over the local knowledge base (RAG)
+- **Episodic memory** — action history log (file writes, patches, shell calls)
+
+#### Agent Capabilities
+- **Recursive self-refinement** — draft → critique → refine cycle on every response
+- **RAG retrieval** — hybrid BM25 + vector search over local knowledge base; injected into every inference call
+- **Multi-peer escalation** — delegates to Claude Code, Gemini CLI, or Qwen CLI on demand or automatically when retry budget is exhausted; requires explicit user consent before files are shared
+- **Design-only peer phase** — prose design tasks (spec, architecture) routed to a design prompt; implementation handed back to Qwen
+- **Shell consent model** — every shell command requires explicit user confirmation; no blocklist, no bypass
+- **Git integration** — branch management, AI-generated commit messages, conflict detection and resolution
+- **Recursive planning** — `plannd` (0.5B) produces 2–8 step plans; orchestrator refines with RAG context
+- **Error recovery** — adaptive strategy switching: write → patch on conflict, import error → install, etc.
+- **Thermal management** — monitors CPU load and battery; reduces inference threads automatically under stress
+- **Static analysis** — auto-lint on every Python write; `/review` command for on-demand scans
+- **Voice interface** — TTS output and STT input via Termux:API
+- **Fine-tuning pipeline** — export interaction history as JSONL, train LoRA adapter on Colab (Unsloth), import adapter with optional on-device merge
+
+#### Security
+- Shell metacharacter blocklist with `\n`/`\r` included
+- `skip_structure_check` bypass removed from shell tools
+- File writes through the Filesystem abstraction layer (not raw `Path.write_text`)
+- Explicit user consent gate before sending local files to external peer CLIs
+- Self-modification (`--self-mod`) requires opt-in; checkpointing before every self-edit
+
+---
+
+## Pre-release Development History
+
+> The following entries document the internal development iterations leading to
+> v2.0.0. They are preserved here for transparency and archaeology. All of these
+> changes are included in the v2.0.0 release.
+
+---
+
 ## [v2.7.2] - 2026-03-29
 
 ### Added — design_only Phase + Step Cap Raise + Test Coverage
@@ -813,10 +871,7 @@ The following features are explicitly out of scope for v2.0.0 but may be conside
 
 | Version | Python | Termux | llama.cpp | Models |
 |---------|--------|--------|-----------|--------|
-| 2.7.1 | 3.12+ | Latest | Latest stable | Qwen2.5-Coder-7B + DeepSeek-R1-1.5B + nomic-embed |
-| 2.7.0 | 3.12+ | Latest | Latest stable | Qwen2.5-Coder-7B + DeepSeek-R1-1.5B + nomic-embed |
-| 2.6.9 | 3.12+ | Latest | Latest stable | Qwen2.5-Coder-7B |
-| 2.0.0 | 3.12+ | Latest | Latest stable | Qwen2.5-7B, Qwen2.5-1.5B |
+| 2.0.0 | 3.12+ | Latest | Latest stable | Qwen2.5-Coder-7B + Qwen2.5-0.5B + nomic-embed-text-v1.5 |
 | 1.0.0 | 3.10+ | Latest | Latest stable | Qwen2.5-Coder-7B |
 
 ---
