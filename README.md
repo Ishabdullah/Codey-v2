@@ -7,7 +7,7 @@
  ██║     ██║   ██║██║  ██║██╔══╝    ╚██╔╝
  ╚██████╗╚██████╔╝██████╔╝███████╗   ██║
   ╚═════╝ ╚═════╝ ╚═════╝ ╚══════╝   ╚═╝  ─ V2
-  v2.0.0 · Local AI Coding Assistant · Termux
+  v2.6.10 · Local AI Coding Assistant · Termux
 ```
 
 > **Codey-v2: A persistent, fully local AI coding agent that runs in Termux on your Android phone — with daemon mode, RAG, git tools, voice, and self-refinement. No cloud required.**

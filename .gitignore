@@ -54,7 +54,6 @@ pipeline_output/pipeline_stats.json
 # ── Codey-v2: dev artifacts ───────────────────────────────────────────────────
 backups/
 codey_backup_*/
-backups/
 .pytest_cache/
 .codeyignore
 audit_report_*.md
@@ -63,6 +62,11 @@ RELEASE_NOTES_*.md
 test_checkpoint.json
 test1_output.log
 test_project/
+*.bak
+*.bak.*
+README.md.bak*
+install.log
+install_background.log
 
 # ── Secrets ───────────────────────────────────────────────────────────────────
 *.key
