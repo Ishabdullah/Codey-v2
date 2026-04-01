@@ -7,7 +7,7 @@ import os
 import fnmatch
 from pathlib import Path
 from utils.logger import success, warning, info
-from core.memory import memory as _mem
+from core.memory_v2 import memory as _mem
 
 _DEFAULT_IGNORE = frozenset({
     ".env", "*.pem", "*.key", ".git", "__pycache__",

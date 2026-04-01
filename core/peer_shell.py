@@ -222,11 +222,12 @@ def _detect_peer_error(output: str, returncode: int) -> Optional[str]:
     return None
 
 
-def run_prompted(cli_name: str, cmd: str, flag: str, prompt_text: str) -> str:
+def run_prompted(cli_name: str, cmd: str, flag: str, prompt_text: str, yolo_flag: str = "") -> str:
     """
     Run a peer CLI in non-interactive mode by passing the prompt as a flag.
     e.g.  claude -p "write a function that reverses a string"
           gemini --model gemini-2.0-flash -p "explain this"
+          qwen -p "task" -y   (yolo_flag="-y" to auto-approve qwen's own tools)
 
     Streams output live to the terminal and captures it for Codey.
     No TUI, no trust dialogs, no pexpect needed.
@@ -246,6 +247,8 @@ def run_prompted(cli_name: str, cmd: str, flag: str, prompt_text: str) -> str:
     try:
         # shlex.split handles "gemini --model x" → ["gemini", "--model", "x"]
         argv = shlex.split(cmd) + [flag, prompt_text]
+        if yolo_flag:
+            argv.append(yolo_flag)
         proc = subprocess.Popen(
             argv,
             stdout=subprocess.PIPE,

@@ -94,7 +94,7 @@ class TaskExecutor:
             # Clear working memory between daemon steps — previous step's
             # files and turn counter bleed into this step causing stale
             # context and premature LRU eviction of files we haven't seen yet.
-            from core.memory import memory as _mem
+            from core.memory_v2 import memory as _mem
             _mem.clear()
 
             # Save and override AGENT_CONFIG for daemon execution.

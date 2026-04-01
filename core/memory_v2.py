@@ -35,7 +35,7 @@ CTX_TOTAL               = MODEL_CONFIG['n_ctx']
 BUDGET_SUMMARY          = 1200   # rolling work summary token cap
 BUDGET_FILES            = 6000   # default file context budget
 MAX_FILE_CONTEXT_TOKENS = 12000  # hard cap for large context windows
-LRU_EVICT_AFTER         = 6      # evict file after N turns without reference
+LRU_EVICT_AFTER         = 3      # evict file after N turns without reference
 
 
 # ────────────────────────────────────────────────────────────────────────────
@@ -657,3 +657,8 @@ def reset_memory():
     """Reset the global singleton (used in tests)."""
     global _memory
     _memory = None
+
+
+# Module-level singleton — mirrors what the old core/memory.py shim exported
+# so callers can do: from core.memory_v2 import memory as _mem
+memory = get_memory()

@@ -24,7 +24,7 @@ from typing import Dict, List, Optional, Any, Tuple
 
 from utils.logger import info, warning, success, error
 from core.state import get_state_store
-from core.memory import memory as _mem
+from core.memory_v2 import memory as _mem
 
 
 # =============================================================================

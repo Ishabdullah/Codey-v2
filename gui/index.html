@@ -1,0 +1,648 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CODEY-V2</title>
+  <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    /* ── Reset & Variables ────────────────────────────────────────────────── */
+    :root {
+      --bg:       #0d1117;
+      --surface:  #161b22;
+      --surface2: #21262d;
+      --border:   #30363d;
+      --text:     #e6edf3;
+      --muted:    #8b949e;
+      --blue:     #58a6ff;
+      --green:    #3fb950;
+      --yellow:   #d29922;
+      --red:      #f85149;
+      --orange:   #e3b341;
+      --purple:   #bc8cff;
+    }
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body, #root {
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', sans-serif;
+      font-size: 14px;
+      overflow: hidden;
+    }
+    #root { display: flex; flex-direction: column; }
+
+    /* ── Header ──────────────────────────────────────────────────────────── */
+    .header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      min-height: 60px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      flex-shrink: 0;
+      flex-wrap: wrap;
+      gap: 10px;
+    }
+    .logo-group {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .logo-wordmark {
+      font-family: 'JetBrains Mono', 'Fira Code', 'Courier New', monospace;
+      font-size: 18px;
+      font-weight: 800;
+      letter-spacing: 3px;
+      background: linear-gradient(90deg, var(--blue) 0%, var(--purple) 100%);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      user-select: none;
+    }
+    .badge {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 11px;
+      font-family: monospace;
+      padding: 2px 8px;
+      border-radius: 20px;
+      white-space: nowrap;
+    }
+    .badge-live {
+      border-color: var(--green);
+      color: var(--green);
+    }
+    .badge-dead {
+      border-color: var(--red);
+      color: var(--red);
+    }
+    .model-pills {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+      justify-content: flex-end;
+    }
+    .pill {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 3px 10px;
+      font-size: 11.5px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      white-space: nowrap;
+      transition: border-color 0.3s;
+    }
+    .pill-label { color: var(--muted); font-size: 10px; margin-right: 2px; }
+    .dot {
+      width: 7px; height: 7px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      transition: background 0.3s, box-shadow 0.3s;
+    }
+    .dot-online  { background: var(--green);  box-shadow: 0 0 6px var(--green); }
+    .dot-remote  { background: var(--blue);   box-shadow: 0 0 6px var(--blue); }
+    .dot-offline { background: var(--red); }
+    .dot-unknown { background: var(--muted); }
+
+    /* ── Metrics bar ─────────────────────────────────────────────────────── */
+    .metrics-bar {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 8px 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+      flex-shrink: 0;
+    }
+    .metrics-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .meter {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      flex: 1;
+      min-width: 0;
+    }
+    .meter-label {
+      color: var(--muted);
+      font-size: 10px;
+      font-weight: 600;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+      width: 52px;
+      flex-shrink: 0;
+    }
+    .meter-track {
+      flex: 1;
+      height: 5px;
+      background: var(--surface2);
+      border-radius: 3px;
+      overflow: hidden;
+      min-width: 60px;
+    }
+    .meter-fill {
+      height: 100%;
+      border-radius: 3px;
+      transition: width 0.6s ease, background 0.6s ease;
+    }
+    .meter-value {
+      color: var(--muted);
+      font-size: 11px;
+      font-family: monospace;
+      flex-shrink: 0;
+      white-space: nowrap;
+    }
+    .tps-chip {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      flex-shrink: 0;
+      font-family: monospace;
+      font-size: 12px;
+      padding-left: 12px;
+      border-left: 1px solid var(--border);
+    }
+    .tps-chip-label {
+      color: var(--muted);
+      font-size: 10px;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+    }
+    .tps-chip-value { color: var(--orange); font-weight: 600; }
+
+    /* ── Terminal ────────────────────────────────────────────────────────── */
+    .terminal-wrap {
+      flex: 1;
+      overflow: hidden;
+      position: relative;
+    }
+    .terminal {
+      height: 100%;
+      overflow-y: auto;
+      padding: 16px 20px 20px;
+      background: var(--bg);
+      font-family: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Courier New', monospace;
+      font-size: 13px;
+      line-height: 1.65;
+    }
+    .terminal::-webkit-scrollbar       { width: 5px; }
+    .terminal::-webkit-scrollbar-track { background: transparent; }
+    .terminal::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+
+    .t-empty {
+      color: var(--muted);
+      font-style: italic;
+      padding-top: 4px;
+    }
+    .t-line   { white-space: pre-wrap; word-break: break-word; color: var(--text); }
+    .t-border { color: #4a5568; }
+    .t-user   { color: var(--blue); margin: 10px 0 2px; border-left: 2px solid var(--blue); padding-left: 10px; }
+    .t-user-glyph { color: var(--muted); }
+    .t-error  { color: #ff7b7b; }
+    .t-ok     { color: var(--green); }
+
+    .t-tps-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 5px;
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--orange);
+      font-size: 11px;
+      padding: 3px 10px;
+      border-radius: 4px;
+      margin: 6px 0 2px;
+    }
+    .t-separator {
+      border: none;
+      border-top: 1px solid var(--border);
+      margin: 10px 0;
+    }
+
+    /* Spinner */
+    .t-spinner {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--muted);
+      margin: 8px 0 2px;
+      font-size: 12px;
+    }
+    .dots span {
+      display: inline-block;
+      width: 4px; height: 4px;
+      border-radius: 50%;
+      background: var(--blue);
+      margin: 0 2px;
+      animation: bounce 1.1s ease-in-out infinite;
+    }
+    .dots span:nth-child(2) { animation-delay: 0.18s; }
+    .dots span:nth-child(3) { animation-delay: 0.36s; }
+    @keyframes bounce {
+      0%, 80%, 100% { transform: translateY(0); opacity: 0.5; }
+      40%            { transform: translateY(-5px); opacity: 1; }
+    }
+
+    /* ── Input bar ───────────────────────────────────────────────────────── */
+    .input-bar {
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      padding: 10px 20px;
+      display: flex;
+      gap: 8px;
+      align-items: center;
+      flex-shrink: 0;
+    }
+    .prompt-input {
+      flex: 1;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      font-family: inherit;
+      font-size: 13.5px;
+      padding: 9px 14px;
+      outline: none;
+      transition: border-color 0.2s;
+      min-width: 0;
+    }
+    .prompt-input:focus        { border-color: var(--blue); }
+    .prompt-input::placeholder { color: var(--muted); }
+    .prompt-input:disabled     { opacity: 0.5; cursor: not-allowed; }
+    .btn {
+      border: none;
+      border-radius: 8px;
+      cursor: pointer;
+      font-size: 13px;
+      font-weight: 500;
+      padding: 9px 18px;
+      white-space: nowrap;
+      transition: opacity 0.15s, background 0.15s;
+    }
+    .btn:disabled          { opacity: 0.38; cursor: not-allowed; }
+    .btn-send              { background: var(--blue); color: #fff; }
+    .btn-send:hover:not(:disabled) { opacity: 0.82; }
+    .btn-cancel            { background: var(--surface2); color: var(--red);
+                             border: 1px solid var(--border); }
+    .btn-cancel:hover      { background: var(--red); color: #fff; border-color: var(--red); }
+    .conn-dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      flex-shrink: 0;
+      transition: background 0.3s;
+    }
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+
+  <script type="text/babel">
+  const { useState, useEffect, useRef, useCallback } = React;
+
+  // ── Helpers ────────────────────────────────────────────────────────────────
+
+  function fmtBytes(b) {
+    const gb = b / 1024 / 1024 / 1024;
+    if (gb >= 1) return `${gb.toFixed(1)} GB`;
+    return `${(b / 1024 / 1024).toFixed(0)} MB`;
+  }
+
+  function fmtTokens(n) {
+    return n >= 1000 ? `${(n / 1000).toFixed(1)}k` : String(n);
+  }
+
+  function lineClass(text) {
+    const t = text.trim();
+    if (!t) return 't-line';
+    if (/^[─━═╒╔╗╘╚╝╞╬┼╟╠╣┤├╦╧╩╪╫▓▒░]+/.test(t)) return 't-line t-border';
+    if (/^\[?(error|err|fail|✗)/i.test(t))          return 't-line t-error';
+    if (/^\[?(done|ok|✓|success|complete)/i.test(t)) return 't-line t-ok';
+    return 't-line';
+  }
+
+  // ── ModelPill ──────────────────────────────────────────────────────────────
+
+  function ModelPill({ id, name, status, backend }) {
+    const dotCls = { online: 'dot dot-online', remote: 'dot dot-remote',
+                     offline: 'dot dot-offline' }[status] ?? 'dot dot-unknown';
+    const displayName = backend !== 'local' ? `${name} · ${backend}` : name;
+    const roleLabel   = { agent: '7B', planner: '0.5B', embed: 'EMB' }[id] ?? '';
+    return (
+      <div className="pill" title={`Port ${id === 'agent' ? 8080 : id === 'planner' ? 8081 : 8082}`}>
+        <span className="pill-label">{roleLabel}</span>
+        <span className={dotCls} />
+        <span>{displayName}</span>
+      </div>
+    );
+  }
+
+  // ── Meter ──────────────────────────────────────────────────────────────────
+
+  function Meter({ label, used, total, fmt, baseColor }) {
+    const pct  = total > 0 ? Math.min(100, (used / total) * 100) : 0;
+    const fill = pct > 85 ? 'var(--red)' : pct > 65 ? 'var(--yellow)' : baseColor;
+    return (
+      <div className="meter">
+        <span className="meter-label">{label}</span>
+        <div className="meter-track">
+          <div className="meter-fill" style={{ width: `${pct.toFixed(1)}%`, background: fill }} />
+        </div>
+        <span className="meter-value">
+          {fmt(used)} / {fmt(total)}&nbsp;<span style={{ color: 'var(--muted)' }}>({Math.round(pct)}%)</span>
+        </span>
+      </div>
+    );
+  }
+
+  // ── Header ─────────────────────────────────────────────────────────────────
+
+  function Header({ models, connected }) {
+    return (
+      <header className="header">
+        <div className="logo-group">
+          <span className="logo-wordmark">CODEY-V2</span>
+          <span className="badge">v2.0.0</span>
+          <span className={`badge ${connected ? 'badge-live' : 'badge-dead'}`}>
+            {connected ? '● LIVE' : '○ offline'}
+          </span>
+        </div>
+        <div className="model-pills">
+          {Object.entries(models).map(([id, m]) => (
+            <ModelPill key={id} id={id} name={m.name} status={m.status} backend={m.backend} />
+          ))}
+        </div>
+      </header>
+    );
+  }
+
+  // ── MetricsBar ─────────────────────────────────────────────────────────────
+
+  function MetricsBar({ ctxUsed, ctxMax, ram, tps }) {
+    return (
+      <div className="metrics-bar">
+        <div className="metrics-row">
+          <Meter
+            label="Context"
+            used={ctxUsed}
+            total={ctxMax}
+            fmt={fmtTokens}
+            baseColor="var(--blue)"
+          />
+          {tps !== null && (
+            <div className="tps-chip">
+              <span className="tps-chip-label">Speed</span>
+              <span className="tps-chip-value">⚡ {tps.toFixed(1)} t/s</span>
+            </div>
+          )}
+        </div>
+        <div className="metrics-row">
+          <Meter
+            label="RAM"
+            used={ram.used}
+            total={ram.total}
+            fmt={fmtBytes}
+            baseColor="var(--green)"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  // ── Terminal ───────────────────────────────────────────────────────────────
+
+  function Terminal({ lines, running }) {
+    const bottomRef = useRef(null);
+
+    useEffect(() => {
+      bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
+    }, [lines, running]);
+
+    return (
+      <div className="terminal-wrap">
+        <div className="terminal">
+          {lines.length === 0 && (
+            <div className="t-empty">
+              Ready — type a prompt below and press Enter or Send.
+            </div>
+          )}
+
+          {lines.map((line, i) => {
+            if (line.type === 'user') {
+              return (
+                <div key={i} className="t-user">
+                  <span className="t-user-glyph">❯ </span>{line.text}
+                </div>
+              );
+            }
+            if (line.type === 'tps') {
+              return (
+                <div key={i}>
+                  <hr className="t-separator" />
+                  <span className="t-tps-badge">⚡ {line.tps.toFixed(1)} t/s</span>
+                </div>
+              );
+            }
+            return (
+              <div key={i} className={lineClass(line.text)}>{line.text}</div>
+            );
+          })}
+
+          {running && (
+            <div className="t-spinner">
+              <div className="dots">
+                <span /><span /><span />
+              </div>
+              <span>Processing…</span>
+            </div>
+          )}
+
+          <div ref={bottomRef} />
+        </div>
+      </div>
+    );
+  }
+
+  // ── InputBar ───────────────────────────────────────────────────────────────
+
+  function InputBar({ onSend, onCancel, running, connected }) {
+    const [value, setValue]   = useState('');
+    const inputRef            = useRef(null);
+
+    const submit = () => {
+      const v = value.trim();
+      if (v && !running && connected) { onSend(v); setValue(''); }
+    };
+
+    const onKey = (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); submit(); }
+    };
+
+    useEffect(() => {
+      if (!running) inputRef.current?.focus();
+    }, [running]);
+
+    const placeholder = running     ? 'Processing — please wait…'
+                       : connected  ? 'Enter a prompt…'
+                       :              'Connecting to server…';
+    return (
+      <div className="input-bar">
+        <div
+          className="conn-dot"
+          style={{ background: connected ? 'var(--green)' : 'var(--red)' }}
+          title={connected ? 'Connected' : 'Disconnected'}
+        />
+        <input
+          ref={inputRef}
+          className="prompt-input"
+          placeholder={placeholder}
+          value={value}
+          onChange={e => setValue(e.target.value)}
+          onKeyDown={onKey}
+          disabled={running || !connected}
+        />
+        {running ? (
+          <button className="btn btn-cancel" onClick={onCancel}>
+            ✕ Cancel
+          </button>
+        ) : (
+          <button
+            className="btn btn-send"
+            onClick={submit}
+            disabled={!value.trim() || !connected}
+          >
+            Send ↵
+          </button>
+        )}
+      </div>
+    );
+  }
+
+  // ── App ────────────────────────────────────────────────────────────────────
+
+  const DEFAULT_MODELS = {
+    agent:   { name: 'Qwen2.5-Coder-7B',  status: 'offline', backend: 'local' },
+    planner: { name: 'Qwen2.5-0.5B',       status: 'offline', backend: 'local' },
+    embed:   { name: 'nomic-embed-text',   status: 'offline', backend: 'local' },
+  };
+
+  function App() {
+    const [connected, setConnected] = useState(false);
+    const [running,   setRunning]   = useState(false);
+    const [lines,     setLines]     = useState([]);
+    const [tps,       setTps]       = useState(null);
+    const [ctxUsed,   setCtxUsed]   = useState(0);
+    const [ctxMax,    setCtxMax]    = useState(32768);
+    const [ram,       setRam]       = useState({ used: 0, total: 1 });
+    const [models,    setModels]    = useState(DEFAULT_MODELS);
+
+    const wsRef        = useRef(null);
+    const reconnTimer  = useRef(null);
+
+    const addLine = useCallback((line) => {
+      setLines(prev => [...prev, line]);
+    }, []);
+
+    const connect = useCallback(() => {
+      const ws = new WebSocket(`ws://${location.host}/ws`);
+      wsRef.current = ws;
+
+      ws.onopen = () => {
+        setConnected(true);
+        clearTimeout(reconnTimer.current);
+      };
+
+      ws.onclose = () => {
+        setConnected(false);
+        setRunning(false);
+        reconnTimer.current = setTimeout(connect, 3000);
+      };
+
+      ws.onerror = () => ws.close();
+
+      ws.onmessage = (ev) => {
+        let msg;
+        try { msg = JSON.parse(ev.data); } catch { return; }
+
+        switch (msg.type) {
+          case 'task_start':
+            setRunning(true);
+            setTps(null);
+            break;
+
+          case 'output':
+            if (msg.ctx_used !== undefined) setCtxUsed(msg.ctx_used);
+            if (msg.ctx_max  !== undefined) setCtxMax(msg.ctx_max);
+            if (msg.tps      !== undefined) setTps(msg.tps);
+            addLine({ type: 'output', text: msg.text });
+            break;
+
+          case 'task_done':
+            setRunning(false);
+            if (msg.ctx_used !== undefined) setCtxUsed(msg.ctx_used);
+            if (msg.tps      !== undefined) {
+              setTps(msg.tps);
+              addLine({ type: 'tps', tps: msg.tps });
+            }
+            break;
+
+          case 'error':
+            setRunning(false);
+            addLine({ type: 'output', text: `⚠ ${msg.text}` });
+            break;
+
+          case 'metrics':
+            setRam(msg.ram);
+            setModels(msg.models);
+            break;
+        }
+      };
+    }, [addLine]);
+
+    useEffect(() => {
+      connect();
+      return () => {
+        clearTimeout(reconnTimer.current);
+        wsRef.current?.close();
+      };
+    }, [connect]);
+
+    const handleSend = useCallback((prompt) => {
+      addLine({ type: 'user', text: prompt });
+      wsRef.current?.send(JSON.stringify({ type: 'command', prompt }));
+    }, [addLine]);
+
+    const handleCancel = useCallback(() => {
+      wsRef.current?.send(JSON.stringify({ type: 'cancel' }));
+    }, []);
+
+    return (
+      <>
+        <Header models={models} connected={connected} />
+        <MetricsBar ctxUsed={ctxUsed} ctxMax={ctxMax} ram={ram} tps={tps} />
+        <Terminal lines={lines} running={running} />
+        <InputBar
+          onSend={handleSend}
+          onCancel={handleCancel}
+          running={running}
+          connected={connected}
+        />
+      </>
+    );
+  }
+
+  ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>

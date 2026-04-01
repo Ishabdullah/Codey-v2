@@ -7,6 +7,69 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.7.2] - 2026-03-29
+
+### Added — design_only Phase + Step Cap Raise + Test Coverage
+
+#### Design-only peer phase (`core/agent.py`)
+
+- **`_is_design_only` detection**: When a peer task contains strong design
+  keywords (`design`, `plan`, `spec`, `outline`, `feature list`, `architecture`,
+  `blueprint`, `roadmap`, `requirements`) without implementation keywords
+  (`implement`, `build`, `code`, `develop`, `program`), the peer is sent
+  `_DESIGN_INSTRUCTIONS` (prose/markdown, no code blocks) instead of
+  `_FORMAT_INSTRUCTIONS` (code block extraction format).
+
+- **`_DESIGN_INSTRUCTIONS`**: New instruction block for design tasks. Explicitly
+  instructs the peer: "Do NOT write any code. Do NOT include code blocks.
+  Describe features, CLI commands, data model, behavior in plain text/markdown."
+  Prevents design specs from including JSON/code examples that `_auto_apply_peer_code`
+  would extract and write as source files — the core bug in the Gemini→Qwen pipeline.
+
+- **Design output saved to `{peer_name}_design.md`**: For design tasks, raw peer
+  output is written directly to disk (e.g. `gemini_design.md`) and the function
+  returns immediately. `_auto_apply_peer_code` is skipped entirely.
+
+- **Disk fallback in `_extract_peer_output_from_history()`**: If a prior peer's
+  output is not found in conversation history (e.g. session resumed after context
+  compression), automatically reads `{peer_name}_design.md` from cwd. This makes
+  the Gemini→Qwen multi-peer pipeline work across context boundaries.
+
+- **Multi-peer injection gated on `not _is_design_only`**: Design steps (step 1
+  of a pipeline) are never implementation steps — the injection check is skipped
+  to avoid scanning history unnecessarily.
+
+#### Step cap raised 5→8 (`core/plannd.py`, `core/orchestrator.py`, `utils/config.py`)
+
+- **`PLANNER_PROMPT`** (`plannd.py`): "2 to 5 steps" → "2 to 8 steps"
+- **`PLAN_PROMPT`** (`orchestrator.py`): "2-5 numbered steps. Max 5 steps." → "2-8 numbered steps. Max 8 steps."
+- **`parse_task_list` and `_postprocess_plan`** (`orchestrator.py`): `[:5]` → `[:8]`
+- **`PLANNER_MAX_TOKENS`** (`utils/config.py`): `768` → `1024` — gives local 0.5B
+  enough room for 8 detailed steps without truncation
+- **`CODEY_VERSION`**: `"2.7.0"` → `"2.7.2"`
+
+#### New unit tests
+
+- **`tests/test_parse_tool_call.py`** (22 tests): `parse_tool_call` — JSON in
+  `<tool>` tags, rogue tags, block-style `write_file`, malformed JSON (trailing
+  comma, incomplete JSON), no-tool case.
+- **`tests/test_breadth.py`** (16 tests): `classify_breadth_need` — minimal
+  (Q&A), standard (single-file tasks), deep (multi-file/API), edge cases.
+- **`tests/test_orchestration.py`** — added `TestPostprocessPlan` (8 tests):
+  deduplication of same-file steps, `Run:` step preservation, 8-step cap,
+  `Verify` step pass-through. Added `TestIntegrationAgentUtils` (4 tests):
+  `extract_json` roundtrip, `parse_tool_call` roundtrip, hallucination
+  detection with and without tool use.
+
+### Changed
+
+- `utils/config.py` — `CODEY_VERSION`: `"2.7.0"` → `"2.7.2"`
+- `utils/config.py` — `PLANNER_MAX_TOKENS`: `768` → `1024`
+- `core/plannd.py` — step prompt: "2 to 5" → "2 to 8"
+- `core/orchestrator.py` — plan cap: 5 → 8
+
+---
+
 ## [v2.7.1] - 2026-03-29
 
 ### Fixed — Peer CLI Delegation + Shell Safety
@@ -139,13 +202,79 @@ conversational exchanges.
 ---
 
 ## [v2.6.8] - 2026-03-17
-### Added
-- Adaptive planning depth
-- Thermal awareness (better mobile/daemon throttling)
+
+### Added — Phase 8: Adaptive Depth + Thermal Awareness
+
+#### `core/recursive.py` — `get_adaptive_depth()`
+
+- New function `get_adaptive_depth(requested_depth)` adjusts recursion depth
+  based on device thermal and battery state read from `THERMAL_CONFIG`.
+- Rules (in priority order):
+  - `temp >= temp_critical` (default 90°C) → force depth 0 (no recursion)
+  - `temp >= temp_warn` (default 75°C) → cap depth at 1
+  - `battery <= batt_critical` (5%) and not charging → force depth 0
+  - `battery <= batt_low` (15%) and not charging → cap depth at 1
+  - Charging or cool → use `requested_depth` as-is
+- `get_adaptive_depth` is called by `recursive_infer()` to replace the
+  hard-coded `max_depth` argument, so hot devices silently degrade to faster
+  single-pass inference instead of timing out.
+
+#### `utils/config.py` — `THERMAL_CONFIG`
+
+Added `THERMAL_CONFIG` dict with tunable thresholds:
+
+```python
+THERMAL_CONFIG = {
+    "enabled": True,
+    "warn_after_sec": 300,        # 5 min — log thread-reduction warning
+    "reduce_threads_after_sec": 600,  # 10 min — drop to min_threads
+    "min_threads": 2,
+    "original_threads": 4,        # set from MODEL_CONFIG at startup
+    "temp_critical": 90,          # °C — skip recursion entirely
+    "temp_warn": 75,              # °C — cap recursion depth to 1
+    "batt_critical": 5,           # % — skip recursion if not charging
+    "batt_low": 15,               # % — cap depth to 1 if not charging
+}
+```
+
+#### `core/daemon.py` — thread reduction loop
+
+Daemon background thread monitors elapsed inference time and reduces
+`MODEL_CONFIG["n_threads"]` to `THERMAL_CONFIG["min_threads"]` after
+`reduce_threads_after_sec` of continuous inference — prevents sustained
+CPU saturation from overheating the device.
+
+### Changed
+- `utils/config.py` — Version bumped: `2.6.7` → `2.6.8`
+
+---
 
 ## [v2.6.7] - 2026-03-17
+
+### Changed — Phase 7: Cleanup & Simplification
+
+Phase 7 removed dead code paths and simplified the inference stack that
+accumulated across Phases 1–6.
+
+- **Removed legacy `build_system_prompt()` body** — reduced to a one-line
+  wrapper around `build_recursive_prompt(phase="draft")`. All internal call
+  sites already use `build_recursive_prompt` directly (Phase 3).
+- **Removed duplicate `learn_from_file` call** from `execute_tool()` —
+  it was called once in `execute_tool` and again in the `run_agent` loop
+  after tool execution, causing double-learning per write. Kept only the
+  post-execution call in the agent loop.
+- **Consolidated `_action_kws` list** — `orchestrator.is_complex` and
+  `agent.run_agent` both maintained separate action keyword lists that
+  had drifted out of sync. Aligned them and added missing verbs
+  (`verify`, `validate`, `confirm`, `replace`, `rename`, `swap`).
+- **Removed stale `peer_cli.escalate()` history loop** — a `for _hm in
+  reversed(history)` scan that could replace the current user task with
+  a stale message from a resumed session. Always use `user_message` directly.
+- **Cleaned `__pycache__` guard** in daemon start script.
+
 ### Changed
-- General cleanup and simplification (Phase 7)
+- `utils/config.py` — Version bumped: `2.6.6` → `2.6.7`
+
 
 
 

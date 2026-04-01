@@ -216,8 +216,32 @@ def extract_json(raw):
             result.append(ch)
         return ''.join(result)
 
-    # Try raw candidate first, then cleaned, then newline-fixed
-    for s in [candidate, cleaned, _fix_literal_newlines(cleaned)]:
+    def _fix_unquoted_values(s):
+        """Quote unquoted string values emitted by smaller models.
+
+        Handles cases like {"path": /tmp/foo.py} or {"cmd": ls -la}
+        where the model omits quotes around non-JSON-primitive values.
+        """
+        def _replacer(m):
+            key_part = m.group(1)
+            val = m.group(2).strip()
+            # Leave JSON primitives alone
+            if val in ('true', 'false', 'null'):
+                return m.group(0)
+            if re.match(r'^-?\d+\.?\d*$', val):
+                return m.group(0)
+            escaped = val.replace('\\', '\\\\').replace('"', '\\"')
+            return key_part + '"' + escaped + '"'
+        # Match ": unquoted_value  where value is not already quoted/object/array
+        return re.sub(
+            r'(":\s*)([^",\{\[\s][^,\}]*?)(?=\s*[,\}])',
+            _replacer,
+            s,
+        )
+
+    # Try raw candidate first, then cleaned, then newline-fixed, then unquoted-fixed
+    for s in [candidate, cleaned, _fix_literal_newlines(cleaned),
+              _fix_unquoted_values(cleaned)]:
         try:
             return json.loads(s)
         except (json.JSONDecodeError, ValueError):
@@ -332,7 +356,7 @@ def execute_tool(tool_dict):
 
         # Log successful actions to episodic memory (lightweight — just a string)
         if (_is_write or _is_patch or name == "shell") and not result.startswith("[ERROR]"):
-            from core.memory import memory as _mem
+            from core.memory_v2 import memory as _mem
             _mem.log_action(name, result[:100])
 
         # NOTE: learning.learn_from_file is NOT called here — it's called once
@@ -582,6 +606,23 @@ def _auto_apply_peer_code(peer_output, context_message=""):
         if not any(fname.endswith(ext) for ext in _CODE_EXTS):
             continue
         _safe_write(fname, code)
+
+    # ── Secondary: fuzzy heading patterns (### File: x.py / ## x.py / File: x.py)
+    if not files_written:
+        _fuzzy_re = re.compile(
+            r'(?:#{1,4}\s+(?:[Ff]ile:\s*)?|[Ff]ile:\s*)([\w][\w.\-/]*\.\w+)'
+            r'[^\n]*\n'
+            r'```(?:\w+)?\n(.*?)```',
+            re.DOTALL,
+        )
+        for m in _fuzzy_re.finditer(peer_output):
+            fname = os.path.basename(m.group(1))
+            code = m.group(2)
+            if not fname or not code or len(code.strip()) < 50:
+                continue
+            if not any(fname.endswith(ext) for ext in _CODE_EXTS):
+                continue
+            _safe_write(fname, code)
 
     # ── Fallback: bare fenced blocks — infer filename from context ────────────
     # Only runs when the primary pass wrote nothing.
@@ -897,7 +938,7 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
         if not approved:
             return "[Cancelled]", history
     # Tick memory manager — evicts stale files, advances turn counter
-    from core.memory import memory as _mem
+    from core.memory_v2 import memory as _mem
     _mem.tick()
     # ── Phase 3: Layered system prompt (draft phase) ──────────────────────────
     sys_prompt = build_recursive_prompt(user_message, phase="draft", plan_rag_block=_plan_rag_block)
@@ -1112,7 +1153,7 @@ def run_agent(user_message, history, yolo=False, use_plan=False, no_plan=False, 
             tools_used.append(sig)
             last_tool_result = execute_tool(tool_dict)
             if name in ("write_file", "patch_file"):
-                from core.memory import memory as _mem
+                from core.memory_v2 import memory as _mem
                 fpath = args.get("path", "")
                 # Load into working memory directly from args — avoids re-reading
                 # from disk (the content is already in args["content"]).

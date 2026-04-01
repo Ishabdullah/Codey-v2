@@ -36,6 +36,8 @@ class PeerCLI:
     prompt_flag: str = ""      # flag for non-interactive prompt injection
     prompt_prefix: str = ""    # prefix before the prompt string
     use_pty: bool = True       # False = run via os.system (avoids nested PTY issues)
+    yolo_flag: str = ""        # appended after the prompt to skip tool confirmations
+                               # e.g. "-y" for qwen so it can auto-approve its own tools
 
 
 # ── Registry ──────────────────────────────────────────────────────────────────
@@ -70,6 +72,7 @@ PEER_REGISTRY: List[PeerCLI] = [
         interactive=False,
         use_pty=False,
         prompt_flag="-p",
+        yolo_flag="-y",   # qwen -p "task" -y → auto-approve its own tool calls
     ),
 ]
 
@@ -256,7 +259,7 @@ class PeerCLIManager:
         from core.peer_shell import run_peer, run_direct, run_prompted
         if cli.prompt_flag and prompt:
             # Non-interactive: cmd -p "task" — clean output, no TUI
-            return run_prompted(cli.name, cli.cmd, cli.prompt_flag, prompt)
+            return run_prompted(cli.name, cli.cmd, cli.prompt_flag, prompt, cli.yolo_flag)
         elif cli.use_pty:
             return run_peer(cli.name, cli.cmd, prompt)
         else:

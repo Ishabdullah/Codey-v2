@@ -16,7 +16,15 @@ def is_dangerous(command: str) -> bool:
     if base_cmd in DANGEROUS_COMMANDS:
         return True
     cmd_lower = command.lower()
-    dangerous_patterns = ["sudo ", "> /dev/", "| sh", "| bash", ":(){:|:&};:"]
+    dangerous_patterns = [
+        "sudo ", "> /dev/", "| sh", "| bash", ":(){:|:&};:",
+        # Indirect execution via sh/bash -c
+        "sh -c ", "bash -c ",
+        # Destructive git operations
+        "reset --hard", "push --force", "push -f ",
+        # find -delete
+        " -delete",
+    ]
     return any(p in cmd_lower for p in dangerous_patterns)
 
 def shell(command: str, yolo: bool = False, timeout: int = 1800) -> str:

@@ -31,7 +31,7 @@ from core.memory_v2 import (
     LRU_EVICT_AFTER,
     MAX_FILE_CONTEXT_TOKENS,
 )
-from core.memory import memory as global_memory
+from core.memory_v2 import memory as global_memory
 
 
 class TestWorkingMemoryItem(unittest.TestCase):
@@ -473,7 +473,7 @@ class TestMemoryGlobalSingleton(unittest.TestCase):
 
     def test_global_memory_is_memory_instance(self):
         """Global memory import should be Memory instance."""
-        from core.memory import memory
+        from core.memory_v2 import memory
         self.assertIsInstance(memory, Memory)
 
 

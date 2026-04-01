@@ -2,7 +2,7 @@ import unittest
 import os
 from pathlib import Path
 from core.context import load_file
-from core.memory import memory as _mem
+from core.memory_v2 import memory as _mem
 
 class TestCodeyIgnore(unittest.TestCase):
     def setUp(self):
