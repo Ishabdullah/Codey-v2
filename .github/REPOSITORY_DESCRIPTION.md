@@ -1,0 +1,1 @@
+A persistent, fully local AI coding agent that runs in Termux on Android — with daemon mode, RAG, git tools, voice, and self-refinement. No cloud required.
