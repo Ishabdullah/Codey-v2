@@ -60,7 +60,10 @@ print_warning() { echo -e "${YELLOW}[WARN]${NC} $1"; }
 print_error()   { echo -e "${RED}[ERR]${NC}  $1"; }
 print_step()    { echo; echo -e "${CYAN}${BOLD}── $1 ──${NC}"; }
 
-is_termux() { [ -d "/data/data/com.termux" ]; }
+is_termux() {
+    [[ -n "${TERMUX_VERSION:-}" || "${PREFIX:-}" == */com.termux/* ]] \
+        || [ -d "/data/data/com.termux" ]
+}
 
 # ── 1. Environment check ──────────────────────────────────────────────────────
 check_termux() {
@@ -78,7 +81,7 @@ install_system_deps() {
 
     if is_termux; then
         pkg update -y
-        pkg install -y python cmake ninja clang wget curl git
+        pkg install -y python python-numpy cmake ninja clang wget curl git
         # pyarrow & pandas must come from pkg on Termux (pip wheels fail on aarch64)
         pkg install -y python-pyarrow python-pandas 2>/dev/null \
             || print_warning "python-pyarrow/pandas pkg install failed — pipeline features may not work"
@@ -109,21 +112,37 @@ install_python_deps() {
 
     cd "$CODEY_V2_DIR"
 
-    # Install only what's needed for the core agent + GUI
-    # (pipeline/training deps are optional — see requirements.txt for full list)
-    pip3 install \
+    # NumPy comes from Termux's prebuilt package; never build it via pip there.
+    if is_termux; then
+        python3 -c 'import numpy' || {
+            print_error "NumPy unavailable to python3; run pkg install python-numpy"
+            return 1
+        }
+    else
+        python3 -m pip install "numpy>=1.24.0"
+    fi
+
+    # Required packages must succeed before reporting a successful installation.
+    python3 -m pip install \
         "rich>=14.0.0" \
-        "numpy>=1.24.0" \
         "watchdog>=3.0.0" \
         "aiohttp>=3.9.0" \
         "requests>=2.31.0" \
         "httpx>=0.27.0" \
         "pyyaml>=6.0" \
         "filelock>=3.13.0" \
-        "tqdm>=4.65.0" \
-        "hnswlib>=0.7.0" \
-        || print_warning "Some pip packages failed — Codey-v2 may still work"
+        "tqdm>=4.65.0" || {
+            print_error "Core Python dependency installation failed"
+            return 1
+        }
 
+    # ANN acceleration is optional; the pipeline already has a NumPy fallback.
+    if is_termux; then
+        print_status "Using NumPy vector search on Termux (no hnswlib build required)"
+    else
+        python3 -m pip install -r "$CODEY_V2_DIR/requirements-ann.txt" \
+            || print_warning "Optional hnswlib unavailable — using NumPy vector search"
+    fi
     print_success "Core Python packages installed"
 
     # Offer to install full pipeline deps
@@ -132,7 +151,7 @@ install_python_deps() {
         read -p "  Install pipeline/training extras? (large download, optional) [y/N] " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Yy]$ ]]; then
-            pip3 install -r "$CODEY_V2_DIR/requirements.txt" \
+            python3 -m pip install -r "$CODEY_V2_DIR/requirements.txt" \
                 || print_warning "Some pipeline packages may have failed (normal on Termux)"
         fi
     fi
@@ -456,4 +475,6 @@ main() {
     print_completion
 }
 
-main "$@"
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+    main "$@"
+fi

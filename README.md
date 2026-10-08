@@ -62,6 +62,10 @@ codey2 "add a docstring to every function in utils.py"
 codeyd2 status
 ```
 
+On Termux, the installer uses prebuilt NumPy and NumPy vector search. Native ANN
+acceleration is optional on desktop: `python3 -m pip install -r requirements-ann.txt`.
+Android may restrict system statistics; monitoring tolerates unavailable readings.
+
 See [docs/installation.md](docs/installation.md) for manual setup and model download links.
 
 ---
@@ -71,7 +75,8 @@ See [docs/installation.md](docs/installation.md) for manual setup and model down
 ```bash
 # 1. Clone and install Python dependencies
 git clone https://github.com/Ishabdullah/Codey-v2.git && cd Codey-v2
-pip install -r requirements.txt
+# On Termux first: pkg install python-numpy python-pyarrow python-pandas
+python3 -m pip install -r requirements.txt
 
 # 2. Set your API key (get one at https://openrouter.ai/keys)
 export OPENROUTER_API_KEY="sk-or-your-key-here"

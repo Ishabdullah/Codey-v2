@@ -6,7 +6,7 @@ Reads CPU%, RAM, and CPU/SoC temperature in a background thread.
 Provides a Rich renderable for live display and a terminal-title updater.
 
 No psutil required — reads /proc/stat, /proc/meminfo, and
-/sys/class/thermal directly (all available in Termux/Android).
+/sys/class/thermal directly when permitted by the OS. Android may restrict these files.
 psutil is used when installed for slightly more accurate CPU%.
 """
 
@@ -163,7 +163,7 @@ class SystemMonitor:
             val = psutil.cpu_percent(interval=None)
             if val > 0.0:
                 return val
-        except ImportError:
+        except (ImportError, OSError):
             pass
         return self._read_cpu_proc()
 
@@ -211,7 +211,7 @@ class SystemMonitor:
             import psutil
             m = psutil.virtual_memory()
             return m.used, m.total
-        except ImportError:
+        except (ImportError, OSError):
             pass
         try:
             info: dict = {}

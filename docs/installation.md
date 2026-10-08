@@ -27,8 +27,8 @@ This handles everything below automatically. If you prefer full control, follow 
 ### Step 1 — Install system dependencies
 
 ```bash
-pkg install cmake ninja clang python
-pip install rich numpy watchdog
+pkg install cmake ninja clang python python-numpy
+python3 -m pip install rich watchdog
 ```
 
 ### Step 2 — Build llama.cpp
@@ -115,7 +115,7 @@ The pipeline has additional dependencies beyond the base Codey-v2 install. The i
 #### Step 1 — Install compiled packages via pkg
 
 ```bash
-pkg install python-pyarrow python-pandas
+pkg install python-numpy python-pyarrow python-pandas
 ```
 
 > Do **not** use `pip install pyarrow` or `pip install pandas` on Termux. Pip will attempt to compile from source and fail with Rust/meson/Cython errors on aarch64. The `pkg` versions (pyarrow 23.0.1, pandas 3.0.1 as of this writing) are pre-built and work immediately.
@@ -124,7 +124,7 @@ pkg install python-pyarrow python-pandas
 
 ```bash
 pip install datasets huggingface-hub "fsspec==2026.2.0" \
-            httpcore httpx typer tqdm hnswlib \
+            httpcore httpx typer tqdm \
             aiohttp multiprocess dill xxhash pyyaml \
             filelock requests
 ```
@@ -133,7 +133,7 @@ pip install datasets huggingface-hub "fsspec==2026.2.0" \
 
 - **`fsspec==2026.2.0` must be pinned.** The `datasets` 4.8.4 library is incompatible with `fsspec>=2026.3.0`. Installing without the pin causes an `ImportError` at runtime. If you already have a newer fsspec, downgrade: `pip install "fsspec==2026.2.0"`.
 
-- **`hnswlib` build requires clang.** If you haven't installed clang already (for llama.cpp), run `pkg install clang cmake` first. If hnswlib fails to build for any reason, the pipeline automatically falls back to numpy brute-force cosine search — you do not need hnswlib for the pipeline to work.
+- **Native ANN acceleration is optional.** Termux uses NumPy brute-force cosine search by default, avoiding isolated NumPy/pybind11 source builds. Desktop users can install acceleration with `python3 -m pip install -r requirements-ann.txt`.
 
 - **`hf-xet` build failures are harmless.** You may see `ERROR: Failed to build 'hf-xet'` during `pip install datasets`. This is an optional Rust extension used only for HuggingFace uploads; it is not used by the pipeline. Ignore it.
 

@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
+## [v2.0.1] - 2026-10-08
+
+### Fixed
+- Termux installation uses prebuilt `python-numpy` and the existing NumPy vector
+  search fallback, avoiding hnswlib's isolated NumPy/pybind11 build failures (#1).
+- Native ANN acceleration is now optional (`requirements-ann.txt`), including
+  pipeline extras. Core dependency failures stop installation with a clear error.
+- System monitoring tolerates psutil permission errors and missing OS files,
+  allowing the REPL and monitoring thread to run on restricted Android systems (#2).
+
+### Validation
+- Regression tests simulate denied/missing system files and psutil errors,
+  check installer command behavior, and exercise NumPy vector search persistence.
+- Real-device Termux installation and model inference still require device validation.
+
 ## [v2.0.0] - 2026-04-01
 
 ### Initial Public Release

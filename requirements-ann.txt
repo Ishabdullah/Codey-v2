@@ -1,0 +1,3 @@
+# Optional native ANN acceleration; NumPy vector search works without it.
+# Termux users should use the default NumPy fallback.
+hnswlib>=0.7.0
